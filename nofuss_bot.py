@@ -23,8 +23,8 @@ from aiogram.types import (
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-
-TOKEN = ""
+import os
+TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946  # <-- замени на свой Telegram ID
 
 
