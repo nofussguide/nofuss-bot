@@ -14,7 +14,7 @@ NoFuss Guide Telegram Bot
 
 contact_info = message.contact.phone_number if message.contact else message.text
 
-text = f"""
+    text = f"""
 🔥 Новая заявка NoFuss Guide
 
 Категория: {data['category']}
