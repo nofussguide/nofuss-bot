@@ -3,6 +3,7 @@ import os
 import time
 import sqlite3
 import csv
+from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
@@ -21,6 +22,25 @@ bot = Bot(TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 user_last_request = {}
+
+
+# ---------- HEALTH CHECK ----------
+async def health(request):
+    return web.Response(text="NoFuss Guide Bot is running")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", health)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    port = int(os.environ.get('PORT', 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+
+    await site.start()
+# ----------------------------------
+
 
 db = sqlite3.connect("nofuss.db")
 cursor = db.cursor()
@@ -290,6 +310,7 @@ async def fallback(message: Message):
     await message.answer("Используйте кнопки меню ниже 👇")
 
 async def main():
+    await start_web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
