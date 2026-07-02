@@ -248,28 +248,28 @@ async def used(message: Message, state: FSMContext):
 
     kb = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="✅ Да")],
-            [KeyboardButton(text="❌ Нет")],
+            [KeyboardButton(text="📝 Указать модели")],
+            [KeyboardButton(text="⏭ Пропустить")],
         ],
         resize_keyboard=True,
     )
 
     await message.answer(
-        "Есть модели, которые вам уже нравятся?",
+        "📝 Хотите указать модели, которые уже рассматриваете?",
         reply_markup=kb
     )
     await state.set_state(Form.models_choice)
 
 @dp.message(Form.models_choice)
 async def models_choice(message: Message, state: FSMContext):
-    if message.text == "✅ Да":
+    if message.text == "📝 Указать модели":
         await message.answer(
             "Напишите понравившиеся модели через запятую.\n\nНапример:\niPhone 17, Galaxy S27"
         )
         await state.set_state(Form.models)
         return
 
-    if message.text == "❌ Нет":
+    if message.text == "⏭ Пропустить":
         await state.update_data(models="Не указано")
 
         kb = ReplyKeyboardMarkup(
