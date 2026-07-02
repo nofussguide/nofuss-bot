@@ -93,6 +93,7 @@ class Form(StatesGroup):
     budget = State()
     priority = State()
     used = State()
+    models_choice = State()
     models = State()
     contact = State()
 
@@ -244,8 +245,43 @@ async def priority(message: Message, state: FSMContext):
 @dp.message(Form.used)
 async def used(message: Message, state: FSMContext):
     await state.update_data(used=message.text)
-    await message.answer('Есть модели, которые вам уже нравятся?\nЕсли нет — напишите "нет".')
-    await state.set_state(Form.models)
+
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="✅ Да")],
+            [KeyboardButton(text="❌ Нет")],
+        ],
+        resize_keyboard=True,
+    )
+
+    await message.answer(
+        "Есть модели, которые вам уже нравятся?",
+        reply_markup=kb
+    )
+    await state.set_state(Form.models_choice)
+
+@dp.message(Form.models_choice)
+async def models_choice(message: Message, state: FSMContext):
+    if message.text == "✅ Да":
+        await message.answer(
+            "Напишите понравившиеся модели через запятую.\n\nНапример:\niPhone 17, Galaxy S27"
+        )
+        await state.set_state(Form.models)
+        return
+
+    if message.text == "❌ Нет":
+        await state.update_data(models="Не указано")
+
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="📞 Поделиться контактом", request_contact=True)]],
+            resize_keyboard=True,
+        )
+
+        await message.answer("Оставьте контакт для связи.", reply_markup=kb)
+        await state.set_state(Form.contact)
+        return
+
+    await message.answer("⚠️ Используйте кнопки меню.")
 
 @dp.message(Form.models)
 async def models(message: Message, state: FSMContext):
@@ -270,7 +306,11 @@ async def finish(message: Message, state: FSMContext):
     user_last_request[user_id] = time.time()
 
     data = await state.get_data()
-    contact_info = message.contact.phone_number if message.contact else message.text
+    if not message.contact:
+        await message.answer("⚠️ Пожалуйста, используйте кнопку '📞 Поделиться контактом'")
+        return
+
+    contact_info = message.contact.phone_number
 
     cursor.execute(
         "INSERT INTO requests(user_id, category, budget, contact) VALUES(?,?,?,?)",
