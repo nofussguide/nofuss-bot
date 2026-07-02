@@ -1,10 +1,15 @@
 import asyncio
 import os
 import time
+import sqlite3
+import csv
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.filters import CommandStart, Command
+from aiogram.types import (
+    Message, ReplyKeyboardMarkup, KeyboardButton,
+    InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+)
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -16,6 +21,27 @@ bot = Bot(TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 user_last_request = {}
+
+db = sqlite3.connect("nofuss.db")
+cursor = db.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    category TEXT,
+    budget TEXT,
+    contact TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
+db.commit()
 
 CATEGORIES = [
     "📱 Смартфоны",
@@ -56,7 +82,7 @@ def main_menu():
             [KeyboardButton(text="📱 Смартфоны"), KeyboardButton(text="💻 Ноутбуки")],
             [KeyboardButton(text="📺 Телевизоры"), KeyboardButton(text="📲 Планшеты")],
             [KeyboardButton(text="⌚ Носимая электроника"), KeyboardButton(text="🔧 Другое")],
-            [KeyboardButton(text="❓ FAQ")],
+            [KeyboardButton(text="❓ FAQ"), KeyboardButton(text="💬 Связаться напрямую")],
         ],
         resize_keyboard=True,
     )
@@ -65,21 +91,81 @@ def main_menu():
 @dp.message(F.text == "🔄 Начать заново")
 async def start(message: Message, state: FSMContext):
     await state.clear()
+
+    cursor.execute("INSERT OR IGNORE INTO users(user_id) VALUES(?)", (message.from_user.id,))
+    db.commit()
+
+    channel = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="📢 Telegram-канал", url="https://t.me/NoFussGuide")
+        ]]
+    )
+
     await message.answer(
-        "👋 Добро пожаловать в NoFuss Guide\n\nШаг 1/3\nВыберите категорию техники:",
-        reply_markup=main_menu(),
+        "👋 Добро пожаловать в NoFuss Guide\n\n"
+        "🔍 Этот бот помогает подобрать технику под ваш бюджет и задачи.\n\n"
+        "Подберу смартфон, ноутбук, телевизор, планшет или другую электронику "
+        "без навязанных брендов, рекламы и лишних переплат.\n\n"
+        "⚠️ Бот автоматически собирает требования, а итоговый подбор выполняю лично я.",
+        reply_markup=channel
+    )
+
+    await message.answer(
+        "Шаг 1/3\n\nВыберите категорию техники:",
+        reply_markup=main_menu()
     )
     await state.set_state(Form.category)
+
+@dp.message(F.text == "💬 Связаться напрямую")
+async def direct_contact(message: Message):
+    await message.answer("💬 Написать напрямую:\nhttps://t.me/goojifeed")
 
 @dp.message(F.text == "❓ FAQ")
 async def faq(message: Message):
     await message.answer(
         "❓ Частые вопросы\n\n"
-        "• Сколько стоит подбор? — По договорённости.\n"
         "• Как быстро отвечаете? — Обычно в течение дня.\n"
-        "• Подбираете б/у? — Да.\n"
-        "• Какие бренды рассматриваете? — Любые достойные варианты."
+        "• Подбираете б/у технику? — Да.\n"
+        "• Какие бренды рассматриваете? — Любые достойные варианты.\n"
+        "• Можно подобрать редкую технику? — Да."
     )
+
+@dp.message(Command("admin"))
+async def admin(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    users = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    requests = cursor.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
+
+    stats = cursor.execute(
+        "SELECT category, COUNT(*) FROM requests GROUP BY category"
+    ).fetchall()
+
+    text = f"📊 NoFuss Guide Analytics\n\n👥 Пользователей: {users}\n📨 Заявок: {requests}\n\n"
+
+    for category, count in stats:
+        text += f"{category}: {count}\n"
+
+    await message.answer(text)
+
+@dp.message(Command("export"))
+async def export_data(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    rows = cursor.execute(
+        "SELECT created_at, category, budget, contact FROM requests"
+    ).fetchall()
+
+    filename = "nofuss_export.csv"
+
+    with open(filename, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Дата", "Категория", "Бюджет", "Контакт"])
+        writer.writerows(rows)
+
+    await message.answer_document(FSInputFile(filename))
 
 @dp.message(Form.category)
 async def category(message: Message, state: FSMContext):
@@ -101,9 +187,8 @@ async def category(message: Message, state: FSMContext):
 async def budget(message: Message, state: FSMContext):
     await state.update_data(budget=message.text)
     data = await state.get_data()
-    category = data["category"]
 
-    if category in ["⌚ Носимая электроника", "🔧 Другое"]:
+    if data["category"] in ["⌚ Носимая электроника", "🔧 Другое"]:
         kb = ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="📞 Поделиться контактом", request_contact=True)]],
             resize_keyboard=True,
@@ -113,7 +198,7 @@ async def budget(message: Message, state: FSMContext):
         return
 
     kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=p)] for p in PRIORITIES[category]],
+        keyboard=[[KeyboardButton(text=p)] for p in PRIORITIES[data["category"]]],
         resize_keyboard=True,
     )
 
@@ -167,7 +252,14 @@ async def finish(message: Message, state: FSMContext):
     data = await state.get_data()
     contact_info = message.contact.phone_number if message.contact else message.text
 
-    text = (
+    cursor.execute(
+        "INSERT INTO requests(user_id, category, budget, contact) VALUES(?,?,?,?)",
+        (user_id, data.get("category"), data.get("budget"), contact_info)
+    )
+    db.commit()
+
+    await bot.send_message(
+        ADMIN_ID,
         f"🔥 Новая заявка NoFuss Guide\n\n"
         f"👤 @{message.from_user.username}\n"
         f"🆔 {user_id}\n\n"
@@ -179,10 +271,12 @@ async def finish(message: Message, state: FSMContext):
         f"📞 Контакт: {contact_info}"
     )
 
-    await bot.send_message(ADMIN_ID, text)
-
     await message.answer(
-        "✅ Заявка получена.\nЯ свяжусь с вами после анализа подходящих вариантов.",
+        "✅ Заявка принята\n\n"
+        "Спасибо за обращение в NoFuss Guide.\n\n"
+        "Я изучу ваши требования и подберу наиболее подходящие варианты техники.\n\n"
+        "⏱ Обычно ответ занимает от нескольких часов до одного дня.\n\n"
+        "📢 Пока ожидаете подбор:\nhttps://t.me/NoFussGuide",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="🔄 Начать заново")]],
             resize_keyboard=True,
