@@ -27,7 +27,6 @@ bot = Bot(TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 user_last_request = {}
-user_sessions = {}
 
 
 # ---------- HEALTH CHECK ----------
@@ -135,6 +134,9 @@ CATEGORIES = {
     "⌚ Носимая электроника": "wearables",
     "🔧 Другое": "other",
 }
+
+# Категории, для которых не нужен приоритет
+NO_PRIORITY_CATEGORIES = ["⌚ Носимая электроника", "🔧 Другое"]
 
 BUDGETS = {
     "📱 Смартфоны": [
@@ -376,7 +378,6 @@ def main_menu_inline():
     )
 
 def admin_request_keyboard(request_id):
-    """Клавиатура для админа для управления заявкой"""
     current_status = cursor.execute(
         "SELECT status FROM requests WHERE id = ?", (request_id,)
     ).fetchone()
@@ -409,14 +410,16 @@ def admin_request_keyboard(request_id):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def contact_request_keyboard():
-    """Клавиатура для запроса контакта - только reply-кнопка"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📞 Поделиться контактом", request_contact=True)]
         ],
         resize_keyboard=True,
-        one_time_keyboard=True  # Скрывается после использования
+        one_time_keyboard=True
     )
+
+def remove_keyboard():
+    return ReplyKeyboardMarkup(keyboard=[], resize_keyboard=True)
 
 
 # ---------- ОСНОВНЫЕ ОБРАБОТЧИКИ ----------
@@ -430,6 +433,16 @@ async def start(message: Message, state: FSMContext):
     )
     db.commit()
     
+    await message.answer(
+        "👋 Добро пожаловать в NoFuss Guide\n\n"
+        "🔍 Этот бот помогает подобрать технику под ваш бюджет и задачи.\n\n"
+        "Подберу смартфон, ноутбук, телевизор, планшет или другую электронику "
+        "без навязанных брендов, рекламы и лишних переплат.\n\n"
+        "⚠️ Бот автоматически собирает требования, а итоговый подбор выполняю лично я.\n\n"
+        "Выберите действие:",
+        reply_markup=main_menu_inline()
+    )
+    
     draft = load_draft(message.from_user.id)
     if draft:
         await message.answer(
@@ -441,17 +454,6 @@ async def start(message: Message, state: FSMContext):
                 ]
             )
         )
-        return
-
-    await message.answer(
-        "👋 Добро пожаловать в NoFuss Guide\n\n"
-        "🔍 Этот бот помогает подобрать технику под ваш бюджет и задачи.\n\n"
-        "Подберу смартфон, ноутбук, телевизор, планшет или другую электронику "
-        "без навязанных брендов, рекламы и лишних переплат.\n\n"
-        "⚠️ Бот автоматически собирает требования, а итоговый подбор выполняю лично я.\n\n"
-        "Выберите действие:",
-        reply_markup=main_menu_inline()
-    )
 
 
 @dp.callback_query(F.data == "continue_draft")
@@ -488,7 +490,6 @@ async def continue_draft_callback(callback: CallbackQuery, state: FSMContext):
 async def home_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     delete_draft(callback.from_user.id)
-    # Убираем reply-клавиатуру если она есть
     await callback.message.answer(
         "🏠 Вы в главном меню\n\nВыберите действие:",
         reply_markup=main_menu_inline()
@@ -501,6 +502,10 @@ async def home_callback(callback: CallbackQuery, state: FSMContext):
 async def new_request_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     delete_draft(callback.from_user.id)
+    await callback.message.answer(
+        "📝 Начинаем оформление заявки",
+        reply_markup=remove_keyboard()
+    )
     await callback.message.edit_text(
         f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
         "📱 Выберите категорию техники:",
@@ -518,7 +523,7 @@ async def faq_callback(callback: CallbackQuery):
         "• Подбираете б/у технику? — Да.\n"
         "• Какие бренды рассматриваете? — Любые достойные варианты.\n"
         "• Можно подобрать редкую технику? — Да.\n"
-        "• Сколько стоит услуга? — Бесплатно! 🤝\n\n"
+        "• Стоимость услуги? — Обсуждается индивидуально по согласованию 🤝\n\n"
         "Для возврата в меню нажмите 🏠",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
@@ -569,7 +574,7 @@ async def my_requests_callback(callback: CallbackQuery):
         date = req[3][:10] if req[3] else 'Дата неизвестна'
         text += f"{status} {get_status_text(req[2])}\n"
         text += f"   {req[1]} - {date}\n"
-        if req[4]:  # admin_comment
+        if req[4]:
             text += f"   💬 {req[4]}\n"
         text += "\n"
     
@@ -626,16 +631,38 @@ async def budget_callback(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Ошибка выбора бюджета")
         return
     
-    await state.update_data(budget=budget_text, _last_step='priority')
+    await state.update_data(budget=budget_text)
     save_draft(callback.from_user.id, await state.get_data())
     
-    await callback.message.edit_text(
-        f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
-        f"Категория: {category}\n💰 Бюджет: {budget_text}\n\n🎯 Что для вас наиболее важно?",
-        reply_markup=priority_keyboard(category)
-    )
-    await state.set_state(Form.priority)
-    await callback.answer()
+    # Проверяем, нужно ли спрашивать приоритет
+    if category in NO_PRIORITY_CATEGORIES:
+        # Для "Носимая электроника" и "Другое" сразу переходим к контакту
+        await state.update_data(priority="Не требуется", used="Не требуется", models="Не указано")
+        
+        await callback.message.edit_text(
+            "📞 Для завершения заявки поделитесь контактом.\n\n"
+            "Нажмите кнопку ниже:",
+            reply_markup=None
+        )
+        
+        await callback.message.answer(
+            "👇 Нажмите сюда, чтобы поделиться контактом:",
+            reply_markup=contact_request_keyboard()
+        )
+        
+        await state.set_state(Form.contact)
+        await callback.answer()
+    else:
+        # Для остальных категорий спрашиваем приоритет
+        await state.update_data(_last_step='priority')
+        
+        await callback.message.edit_text(
+            f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
+            f"Категория: {category}\n💰 Бюджет: {budget_text}\n\n🎯 Что для вас наиболее важно?",
+            reply_markup=priority_keyboard(category)
+        )
+        await state.set_state(Form.priority)
+        await callback.answer()
 
 
 @dp.callback_query(Form.priority, F.data.startswith("priority_"))
@@ -690,6 +717,10 @@ async def used_callback(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(Form.models_choice, F.data == "models_specify")
 async def models_specify_callback(callback: CallbackQuery, state: FSMContext):
     await state.update_data(models_choice="📝 Указать модели", _last_step='models')
+    await callback.message.answer(
+        "📝 Введите модели:",
+        reply_markup=remove_keyboard()
+    )
     await callback.message.edit_text(
         "📝 Напишите понравившиеся модели через запятую.\n\n"
         "Например:\niPhone 17, Galaxy S27, Xiaomi 15\n\n"
@@ -755,14 +786,12 @@ async def confirm_yes_callback(callback: CallbackQuery, state: FSMContext):
     
     user_last_request[user_id] = time.time()
     
-    # Убираем инлайн-кнопки из текущего сообщения
     await callback.message.edit_text(
         "📞 Для завершения заявки поделитесь контактом.\n\n"
         "Нажмите кнопку ниже:",
         reply_markup=None
     )
     
-    # Отправляем новое сообщение с reply-клавиатурой для контакта
     await callback.message.answer(
         "👇 Нажмите сюда, чтобы поделиться контактом:",
         reply_markup=contact_request_keyboard()
@@ -796,6 +825,7 @@ async def confirm_edit_callback(callback: CallbackQuery, state: FSMContext):
 async def edit_field_callback(callback: CallbackQuery, state: FSMContext):
     field = callback.data.replace("edit_", "")
     data = await state.get_data()
+    category = data.get("category", "📱 Смартфоны")
     
     if field == "category":
         await callback.message.edit_text(
@@ -805,7 +835,6 @@ async def edit_field_callback(callback: CallbackQuery, state: FSMContext):
         await state.set_state(Form.category)
     
     elif field == "budget":
-        category = data.get("category", "📱 Смартфоны")
         await callback.message.edit_text(
             f"💰 Выберите бюджет для {category}:",
             reply_markup=budget_keyboard(category)
@@ -813,7 +842,10 @@ async def edit_field_callback(callback: CallbackQuery, state: FSMContext):
         await state.set_state(Form.budget)
     
     elif field == "priority":
-        category = data.get("category", "📱 Смартфоны")
+        # Проверяем, нужен ли приоритет для этой категории
+        if category in NO_PRIORITY_CATEGORIES:
+            await callback.answer("ℹ️ Для этой категории приоритет не требуется")
+            return
         await callback.message.edit_text(
             f"🎯 Выберите приоритет для {category}:",
             reply_markup=priority_keyboard(category)
@@ -855,7 +887,6 @@ async def contact_message(message: Message, state: FSMContext):
     if message.contact:
         phone = message.contact.phone_number
         
-        # Валидация телефона (опционально)
         if not validate_phone(phone):
             await message.answer(
                 "⚠️ Похоже, номер неверный. Попробуйте ещё раз:",
@@ -863,16 +894,14 @@ async def contact_message(message: Message, state: FSMContext):
             )
             return
         
-        # Убираем reply-клавиатуру
         await message.answer(
             "✅ Контакт получен!",
-            reply_markup=ReplyKeyboardMarkup(keyboard=[], resize_keyboard=True)
+            reply_markup=remove_keyboard()
         )
         
         await state.update_data(contact=phone)
         await finish_request(message, state)
     else:
-        # Если пользователь отправил текст вместо контакта
         await message.answer(
             "⚠️ Пожалуйста, используйте кнопку '📞 Поделиться контактом'",
             reply_markup=contact_request_keyboard()
@@ -889,6 +918,16 @@ async def finish_request(message: Message, state: FSMContext):
             reply_markup=contact_request_keyboard()
         )
         return
+    
+    # Для категорий без приоритета устанавливаем значения по умолчанию
+    category = data.get("category", "")
+    if category in NO_PRIORITY_CATEGORIES:
+        if not data.get("priority"):
+            data["priority"] = "Не требуется"
+        if not data.get("used"):
+            data["used"] = "Не требуется"
+        if not data.get("models"):
+            data["models"] = "Не указано"
     
     cursor.execute(
         """INSERT INTO requests(
@@ -914,7 +953,6 @@ async def finish_request(message: Message, state: FSMContext):
     
     delete_draft(user_id)
     
-    # Отправляем админу с номером заявки
     admin_text = (
         f"🔥 Новая заявка NoFuss Guide\n\n"
         f"📋 № заявки: {request_number}\n"
@@ -935,7 +973,6 @@ async def finish_request(message: Message, state: FSMContext):
         reply_markup=admin_request_keyboard(request_id)
     )
 
-    # Пользователю НЕ показываем номер заявки
     await message.answer(
         f"✅ Заявка принята!\n\n"
         "🎉 Спасибо за обращение в NoFuss Guide!\n\n"
@@ -981,7 +1018,6 @@ async def admin_status_callback(callback: CallbackQuery):
     )
     db.commit()
     
-    # Отправляем уведомление пользователю (без номера заявки)
     status_text = get_status_text(new_status)
     status_emoji = get_status_emoji(new_status)
     old_status_text_ru = get_status_text(old_status_text)
@@ -1045,7 +1081,6 @@ async def admin_chat_message(message: Message, state: FSMContext):
     
     data = await state.get_data()
     user_id = data.get('chat_user_id')
-    request_id = data.get('chat_request_id')
     
     if not user_id:
         await message.answer("❌ Ошибка: пользователь не найден")
@@ -1328,7 +1363,6 @@ async def cancel_command(message: Message, state: FSMContext):
 async def fallback(message: Message):
     current_state = await state.get_state()
     
-    # Если пользователь в процессе заполнения заявки и отправил текст
     if current_state and current_state != "Form:admin_chat":
         await message.answer(
             "⚠️ Пожалуйста, используйте кнопки для взаимодействия с ботом.",
