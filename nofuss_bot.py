@@ -907,4 +907,4 @@ async def export_data(message: Message):
 
     filename = f"nofuss_export_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
 
-    with open(filename, "w", newline="", encoding="utf-8-sig") as
+    with open(filename, "w", newline="", encoding="utf
