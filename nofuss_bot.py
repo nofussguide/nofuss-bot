@@ -907,4 +907,49 @@ async def export_data(message: Message):
 
     filename = f"nofuss_export_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
 
-    with open(filename, "w", newline="", encoding="utf
+    with open(filename, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "№ заявки",
+            "Дата", 
+            "Категория", 
+            "Бюджет", 
+            "Приоритет", 
+            "Б/У", 
+            "Модели", 
+            "Контакт",
+            "Статус",
+            "Дата подтверждения"
+        ])
+        writer.writerows(rows)
+
+    await message.answer_document(FSInputFile(filename))
+    
+    # Удаляем файл после отправки
+    os.remove(filename)
+
+
+# ---------- FALLBACK ----------
+@dp.message()
+async def fallback(message: Message):
+    await message.answer(
+        "Пожалуйста, используйте кнопки меню для взаимодействия с ботом 👇",
+        reply_markup=main_menu_inline()
+    )
+
+
+@dp.callback_query()
+async def fallback_callback(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "Пожалуйста, используйте кнопки меню для взаимодействия с ботом 👇",
+        reply_markup=main_menu_inline()
+    )
+    await callback.answer()
+
+
+async def main():
+    await start_web_server()
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
