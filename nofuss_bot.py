@@ -10,7 +10,8 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message, ReplyKeyboardMarkup, KeyboardButton,
-    InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+    InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile,
+    CallbackQuery
 )
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -49,7 +50,6 @@ def migrate_db():
     cursor.execute("PRAGMA table_info(requests)")
     columns = [col[1] for col in cursor.fetchall()]
     
-    # Добавляем новые колонки если их нет
     if 'priority' not in columns:
         cursor.execute("ALTER TABLE requests ADD COLUMN priority TEXT")
     if 'used' not in columns:
@@ -94,7 +94,6 @@ CREATE TABLE IF NOT EXISTS requests (
 """)
 db.commit()
 
-# Выполняем миграцию
 migrate_db()
 
 # Создаём триггер для автоинкремента номера заявки
@@ -113,29 +112,88 @@ END;
 """)
 db.commit()
 
-CATEGORIES = [
-    "📱 Смартфоны",
-    "💻 Ноутбуки",
-    "📺 Телевизоры",
-    "📲 Планшеты",
-    "⌚ Носимая электроника",
-    "🔧 Другое",
-]
+CATEGORIES = {
+    "📱 Смартфоны": "smartphones",
+    "💻 Ноутбуки": "laptops",
+    "📺 Телевизоры": "tvs",
+    "📲 Планшеты": "tablets",
+    "⌚ Носимая электроника": "wearables",
+    "🔧 Другое": "other",
+}
 
 BUDGETS = {
-    "📱 Смартфоны": ["До $200", "$200–400", "$400–700", "$700–1000", "$1000–1500", "Более $1500"],
-    "💻 Ноутбуки": ["До $500", "$500–800", "$800–1200", "$1200–2000", "Более $2000"],
-    "📺 Телевизоры": ["До $300", "$300–600", "$600–1000", "$1000–2000", "Более $2000"],
-    "📲 Планшеты": ["До $200", "$200–400", "$400–700", "$700–1000", "Более $1000"],
-    "⌚ Носимая электроника": ["До $100", "$100–300", "$300–700", "Более $700"],
-    "🔧 Другое": ["До $200", "$200–500", "$500–1000", "Более $1000"],
+    "📱 Смартфоны": [
+        ("До $200", "budget_0_200"),
+        ("$200–400", "budget_200_400"),
+        ("$400–700", "budget_400_700"),
+        ("$700–1000", "budget_700_1000"),
+        ("$1000–1500", "budget_1000_1500"),
+        ("Более $1500", "budget_1500_plus"),
+    ],
+    "💻 Ноутбуки": [
+        ("До $500", "budget_0_500"),
+        ("$500–800", "budget_500_800"),
+        ("$800–1200", "budget_800_1200"),
+        ("$1200–2000", "budget_1200_2000"),
+        ("Более $2000", "budget_2000_plus"),
+    ],
+    "📺 Телевизоры": [
+        ("До $300", "budget_0_300"),
+        ("$300–600", "budget_300_600"),
+        ("$600–1000", "budget_600_1000"),
+        ("$1000–2000", "budget_1000_2000"),
+        ("Более $2000", "budget_2000_plus"),
+    ],
+    "📲 Планшеты": [
+        ("До $200", "budget_0_200"),
+        ("$200–400", "budget_200_400"),
+        ("$400–700", "budget_400_700"),
+        ("$700–1000", "budget_700_1000"),
+        ("Более $1000", "budget_1000_plus"),
+    ],
+    "⌚ Носимая электроника": [
+        ("До $100", "budget_0_100"),
+        ("$100–300", "budget_100_300"),
+        ("$300–700", "budget_300_700"),
+        ("Более $700", "budget_700_plus"),
+    ],
+    "🔧 Другое": [
+        ("До $200", "budget_0_200"),
+        ("$200–500", "budget_200_500"),
+        ("$500–1000", "budget_500_1000"),
+        ("Более $1000", "budget_1000_plus"),
+    ],
 }
 
 PRIORITIES = {
-    "📱 Смартфоны": ["📸 Камера", "🎮 Игры", "🔋 Автономность", "⚡ Производительность", "⚖️ Универсальность"],
-    "💻 Ноутбуки": ["💼 Работа и офис", "🎓 Учёба", "🎮 Игры", "🎬 Монтаж и дизайн", "✈️ Лёгкость и автономность"],
-    "📺 Телевизоры": ["🎬 Фильмы", "⚽ Спорт", "🎮 Консоли", "👨‍👩‍👧 Для семьи", "🌟 Лучшее изображение"],
-    "📲 Планшеты": ["✍️ Учёба и заметки", "🎨 Рисование", "🎬 Контент", "🎮 Игры", "💼 Универсальность"],
+    "📱 Смартфоны": [
+        ("📸 Камера", "priority_camera"),
+        ("🎮 Игры", "priority_games"),
+        ("🔋 Автономность", "priority_battery"),
+        ("⚡ Производительность", "priority_performance"),
+        ("⚖️ Универсальность", "priority_balanced"),
+    ],
+    "💻 Ноутбуки": [
+        ("💼 Работа и офис", "priority_work"),
+        ("🎓 Учёба", "priority_study"),
+        ("🎮 Игры", "priority_games"),
+        ("🎬 Монтаж и дизайн", "priority_creative"),
+        ("✈️ Лёгкость и автономность", "priority_portable"),
+    ],
+    "📺 Телевизоры": [
+        ("🎬 Фильмы", "priority_movies"),
+        ("⚽ Спорт", "priority_sport"),
+        ("🎮 Консоли", "priority_console"),
+        ("👨‍👩‍👧 Для семьи", "priority_family"),
+        ("🌟 Лучшее изображение", "priority_picture"),
+    ],
+    "📲 Планшеты": [
+        ("✍️ Учёба и заметки", "priority_study"),
+        ("🎨 Рисование", "priority_drawing"),
+        ("🎬 Контент", "priority_content"),
+        ("🎮 Игры", "priority_games"),
+        ("💼 Универсальность", "priority_balanced"),
+    ],
 }
 
 class Form(StatesGroup):
@@ -149,99 +207,129 @@ class Form(StatesGroup):
     confirm = State()
 
 
-# ---------- КЛАВИАТУРЫ ----------
-def main_menu():
-    """Главное меню"""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📱 Смартфоны"), KeyboardButton(text="💻 Ноутбуки")],
-            [KeyboardButton(text="📺 Телевизоры"), KeyboardButton(text="📲 Планшеты")],
-            [KeyboardButton(text="⌚ Носимая электроника"), KeyboardButton(text="🔧 Другое")],
-            [KeyboardButton(text="❓ FAQ"), KeyboardButton(text="💬 Связаться напрямую")],
-        ],
-        resize_keyboard=True,
-    )
-
-def back_menu():
-    """Клавиатура с кнопкой Назад"""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="⬅️ Назад")],
-            [KeyboardButton(text="🏠 Главное меню")]
-        ],
-        resize_keyboard=True,
-    )
-
-def confirm_menu():
-    """Меню подтверждения"""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="✅ Подтвердить заявку")],
-            [KeyboardButton(text="⬅️ Назад")],
-            [KeyboardButton(text="🏠 Главное меню")]
-        ],
-        resize_keyboard=True,
-    )
+# ---------- INLINE КЛАВИАТУРЫ ----------
+def categories_keyboard():
+    """Клавиатура для выбора категории"""
+    buttons = []
+    row = []
+    for i, (name, value) in enumerate(CATEGORIES.items(), 1):
+        row.append(InlineKeyboardButton(text=name, callback_data=f"cat_{value}"))
+        if i % 2 == 0:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    
+    buttons.append([
+        InlineKeyboardButton(text="❓ FAQ", callback_data="faq"),
+        InlineKeyboardButton(text="💬 Связаться", callback_data="contact_direct")
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def budget_keyboard(category):
-    """Клавиатура для выбора бюджета с кнопкой Назад"""
-    buttons = [[KeyboardButton(text=b)] for b in BUDGETS[category]]
-    buttons.append([KeyboardButton(text="⬅️ Назад")])
-    buttons.append([KeyboardButton(text="🏠 Главное меню")])
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    """Клавиатура для выбора бюджета"""
+    buttons = []
+    for label, callback in BUDGETS.get(category, []):
+        buttons.append([InlineKeyboardButton(text=label, callback_data=callback)])
+    
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_categories"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def priority_keyboard(category):
-    """Клавиатура для выбора приоритета с кнопкой Назад"""
-    buttons = [[KeyboardButton(text=p)] for p in PRIORITIES[category]]
-    buttons.append([KeyboardButton(text="⬅️ Назад")])
-    buttons.append([KeyboardButton(text="🏠 Главное меню")])
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    """Клавиатура для выбора приоритета"""
+    buttons = []
+    for label, callback in PRIORITIES.get(category, []):
+        buttons.append([InlineKeyboardButton(text=label, callback_data=callback)])
+    
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_budget"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def used_keyboard():
-    """Клавиатура для выбора б/у"""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Да")],
-            [KeyboardButton(text="Нет")],
-            [KeyboardButton(text="Не принципиально")],
-            [KeyboardButton(text="⬅️ Назад")],
-            [KeyboardButton(text="🏠 Главное меню")]
-        ],
-        resize_keyboard=True,
+    """Клавиатура для выбора Б/У"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да", callback_data="used_yes")],
+            [InlineKeyboardButton(text="❌ Нет", callback_data="used_no")],
+            [InlineKeyboardButton(text="⚖️ Не принципиально", callback_data="used_any")],
+            [
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_priority"),
+                InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")
+            ]
+        ]
     )
 
 def models_choice_keyboard():
     """Клавиатура для выбора указания моделей"""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📝 Указать модели")],
-            [KeyboardButton(text="⏭ Пропустить")],
-            [KeyboardButton(text="⬅️ Назад")],
-            [KeyboardButton(text="🏠 Главное меню")]
-        ],
-        resize_keyboard=True,
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📝 Указать модели", callback_data="models_specify")],
+            [InlineKeyboardButton(text="⏭ Пропустить", callback_data="models_skip")],
+            [
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_used"),
+                InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")
+            ]
+        ]
+    )
+
+def confirm_keyboard():
+    """Клавиатура подтверждения"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Подтвердить заявку", callback_data="confirm_yes")],
+            [
+                InlineKeyboardButton(text="✏️ Редактировать", callback_data="confirm_edit"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="home")
+            ]
+        ]
     )
 
 def contact_keyboard():
     """Клавиатура для контакта"""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📞 Поделиться контактом", request_contact=True)],
-            [KeyboardButton(text="⬅️ Назад")],
-            [KeyboardButton(text="🏠 Главное меню")]
-        ],
-        resize_keyboard=True,
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📞 Поделиться контактом", 
+                    callback_data="share_contact"
+                )
+            ],
+            [
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_models"),
+                InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")
+            ]
+        ]
     )
 
-def restart_keyboard():
-    """Клавиатура для перезапуска"""
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="🔄 Начать заново")]],
-        resize_keyboard=True,
+def main_menu_inline():
+    """Главное меню с inline-кнопками"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🆕 Новая заявка", callback_data="new_request"),
+                InlineKeyboardButton(text="📋 Мои заявки", callback_data="my_requests")
+            ],
+            [
+                InlineKeyboardButton(text="❓ FAQ", callback_data="faq"),
+                InlineKeyboardButton(text="💬 Связаться", callback_data="contact_direct")
+            ],
+            [
+                InlineKeyboardButton(text="📢 Наш канал", url="https://t.me/NoFussGuide")
+            ]
+        ]
     )
 # ----------------------------------
 
 
+# ---------- ОБРАБОТЧИКИ ----------
 @dp.message(CommandStart())
 async def start(message: Message, state: FSMContext):
     await state.clear()
@@ -249,132 +337,526 @@ async def start(message: Message, state: FSMContext):
     cursor.execute("INSERT OR IGNORE INTO users(user_id) VALUES(?)", (message.from_user.id,))
     db.commit()
 
-    channel = InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text="📢 Telegram-канал", url="https://t.me/NoFussGuide")
-        ]]
-    )
-
     await message.answer(
         "👋 Добро пожаловать в NoFuss Guide\n\n"
         "🔍 Этот бот помогает подобрать технику под ваш бюджет и задачи.\n\n"
         "Подберу смартфон, ноутбук, телевизор, планшет или другую электронику "
         "без навязанных брендов, рекламы и лишних переплат.\n\n"
-        "⚠️ Бот автоматически собирает требования, а итоговый подбор выполняю лично я.",
-        reply_markup=channel
+        "⚠️ Бот автоматически собирает требования, а итоговый подбор выполняю лично я.\n\n"
+        "Выберите действие:",
+        reply_markup=main_menu_inline()
     )
 
-    await message.answer(
-        "Шаг 1/3\n\nВыберите категорию техники:",
-        reply_markup=main_menu()
-    )
-    await state.set_state(Form.category)
 
-
-@dp.message(F.text == "🏠 Главное меню")
-async def go_home(message: Message, state: FSMContext):
+@dp.callback_query(F.data == "home")
+async def home_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await message.answer(
-        "🏠 Вы в главном меню\n\nВыберите категорию техники:",
-        reply_markup=main_menu()
+    await callback.message.edit_text(
+        "🏠 Вы в главном меню\n\nВыберите действие:",
+        reply_markup=main_menu_inline()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "new_request")
+async def new_request_callback(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "📱 Шаг 1/5\n\nВыберите категорию техники:",
+        reply_markup=categories_keyboard()
     )
     await state.set_state(Form.category)
+    await callback.answer()
 
 
-@dp.message(F.text == "⬅️ Назад")
-async def go_back(message: Message, state: FSMContext):
-    current_state = await state.get_state()
-    
-    if not current_state:
-        await message.answer("🏠 Вы уже в главном меню", reply_markup=main_menu())
-        return
-    
-    state_name = current_state.split(":")[-1]
-    data = await state.get_data()
-    
-    # Навигация назад по состояниям
-    if state_name == "Form:budget":
-        await state.set_state(Form.category)
-        await message.answer(
-            "Шаг 1/3\n\nВыберите категорию техники:",
-            reply_markup=main_menu()
-        )
-    
-    elif state_name == "Form:priority":
-        await state.set_state(Form.budget)
-        category = data.get("category", "📱 Смартфоны")
-        await message.answer(
-            "💰 Шаг 2/3\nВыберите бюджет:",
-            reply_markup=budget_keyboard(category)
-        )
-    
-    elif state_name == "Form:used":
-        await state.set_state(Form.priority)
-        category = data.get("category", "📱 Смартфоны")
-        await message.answer(
-            "🎯 Шаг 3/3\nЧто для вас наиболее важно?",
-            reply_markup=priority_keyboard(category)
-        )
-    
-    elif state_name == "Form:models_choice":
-        await state.set_state(Form.used)
-        await message.answer(
-            "Рассматриваете б/у технику?",
-            reply_markup=used_keyboard()
-        )
-    
-    elif state_name == "Form:models":
-        await state.set_state(Form.models_choice)
-        await message.answer(
-            "📝 Хотите указать модели, которые уже рассматриваете?",
-            reply_markup=models_choice_keyboard()
-        )
-    
-    elif state_name == "Form:contact":
-        # Проверяем, откуда пришли (из приоритета или из моделей)
-        if data.get("models_choice") == "📝 Указать модели":
-            await state.set_state(Form.models_choice)
-            await message.answer(
-                "📝 Хотите указать модели, которые уже рассматриваете?",
-                reply_markup=models_choice_keyboard()
-            )
-        else:
-            await state.set_state(Form.used)
-            await message.answer(
-                "Рассматриваете б/у технику?",
-                reply_markup=used_keyboard()
-            )
-    
-    elif state_name == "Form:confirm":
-        await state.set_state(Form.contact)
-        await message.answer(
-            "Оставьте контакт для связи.",
-            reply_markup=contact_keyboard()
-        )
-    
-    else:
-        await message.answer(
-            "❌ Нельзя вернуться назад",
-            reply_markup=main_menu()
-        )
-
-
-@dp.message(F.text == "💬 Связаться напрямую")
-async def direct_contact(message: Message):
-    await message.answer("💬 Написать напрямую:\nhttps://t.me/goojifeed")
-
-
-@dp.message(F.text == "❓ FAQ")
-async def faq(message: Message):
-    await message.answer(
+@dp.callback_query(F.data == "faq")
+async def faq_callback(callback: CallbackQuery):
+    await callback.message.edit_text(
         "❓ Частые вопросы\n\n"
         "• Как быстро отвечаете? — Обычно в течение дня.\n"
         "• Подбираете б/у технику? — Да.\n"
         "• Какие бренды рассматриваете? — Любые достойные варианты.\n"
-        "• Можно подобрать редкую технику? — Да."
+        "• Можно подобрать редкую технику? — Да.\n"
+        "• Сколько стоит услуга? — Бесплатно! 🤝\n\n"
+        "Для возврата в меню нажмите 🏠",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")]
+            ]
+        )
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "contact_direct")
+async def contact_direct_callback(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "💬 Связаться напрямую:\n\n"
+        "📱 Telegram: @goojifeed\n"
+        "📧 Email: support@nofuss.guide\n\n"
+        "Или напишите нам в чат поддержки!",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")]
+            ]
+        )
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "my_requests")
+async def my_requests_callback(callback: CallbackQuery):
+    requests = cursor.execute(
+        """SELECT request_number, category, status, created_at 
+        FROM requests WHERE user_id=? 
+        ORDER BY created_at DESC LIMIT 10""",
+        (callback.from_user.id,)
+    ).fetchall()
+    
+    if not requests:
+        await callback.message.edit_text(
+            "📋 У вас пока нет заявок.\n\n"
+            "Нажмите '🆕 Новая заявка' чтобы создать первую!",
+            reply_markup=main_menu_inline()
+        )
+        await callback.answer()
+        return
+    
+    status_emoji = {
+        'pending': '⏳',
+        'processing': '🔄',
+        'confirmed': '✅',
+        'completed': '🎉',
+        'cancelled': '❌'
+    }
+    
+    text = "📋 Ваши последние заявки:\n\n"
+    for req in requests:
+        status = status_emoji.get(req[2], '📌')
+        date = req[3][:10] if req[3] else 'Дата неизвестна'
+        text += f"#{req[0]} {status} {req[1]}\n   {date}\n\n"
+    
+    text += "Нажмите 🏠 для возврата в меню"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")]
+            ]
+        )
+    )
+    await callback.answer()
+
+
+# ---------- ОБРАБОТЧИКИ ЗАЯВКИ ----------
+@dp.callback_query(Form.category, F.data.startswith("cat_"))
+async def category_callback(callback: CallbackQuery, state: FSMContext):
+    category_name = None
+    for name, value in CATEGORIES.items():
+        if f"cat_{value}" == callback.data:
+            category_name = name
+            break
+    
+    if not category_name:
+        await callback.answer("❌ Ошибка выбора категории")
+        return
+    
+    await state.update_data(category=category_name)
+    
+    await callback.message.edit_text(
+        f"📱 Шаг 2/5\n\nВы выбрали: {category_name}\n\n💰 Выберите бюджет:",
+        reply_markup=budget_keyboard(category_name)
+    )
+    await state.set_state(Form.budget)
+    await callback.answer()
+
+
+@dp.callback_query(Form.budget, F.data.startswith("budget_"))
+async def budget_callback(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    category = data.get("category", "📱 Смартфоны")
+    
+    budget_text = None
+    for label, cb in BUDGETS.get(category, []):
+        if cb == callback.data:
+            budget_text = label
+            break
+    
+    if not budget_text:
+        await callback.answer("❌ Ошибка выбора бюджета")
+        return
+    
+    await state.update_data(budget=budget_text)
+    
+    await callback.message.edit_text(
+        f"📱 Шаг 3/5\n\nКатегория: {category}\n💰 Бюджет: {budget_text}\n\n🎯 Что для вас наиболее важно?",
+        reply_markup=priority_keyboard(category)
+    )
+    await state.set_state(Form.priority)
+    await callback.answer()
+
+
+@dp.callback_query(Form.priority, F.data.startswith("priority_"))
+async def priority_callback(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    category = data.get("category", "📱 Смартфоны")
+    
+    priority_text = None
+    for label, cb in PRIORITIES.get(category, []):
+        if cb == callback.data:
+            priority_text = label
+            break
+    
+    if not priority_text:
+        await callback.answer("❌ Ошибка выбора приоритета")
+        return
+    
+    await state.update_data(priority=priority_text)
+    
+    await callback.message.edit_text(
+        f"📱 Шаг 4/5\n\nКатегория: {category}\n💰 Бюджет: {data.get('budget')}\n"
+        f"🎯 Приоритет: {priority_text}\n\n♻️ Рассматриваете б/у технику?",
+        reply_markup=used_keyboard()
+    )
+    await state.set_state(Form.used)
+    await callback.answer()
+
+
+@dp.callback_query(Form.used, F.data.startswith("used_"))
+async def used_callback(callback: CallbackQuery, state: FSMContext):
+    used_map = {
+        "used_yes": "Да",
+        "used_no": "Нет",
+        "used_any": "Не принципиально"
+    }
+    
+    used_text = used_map.get(callback.data, "Не указано")
+    await state.update_data(used=used_text)
+    
+    await callback.message.edit_text(
+        "📝 Шаг 5/5\n\nХотите указать модели, которые уже рассматриваете?",
+        reply_markup=models_choice_keyboard()
+    )
+    await state.set_state(Form.models_choice)
+    await callback.answer()
+
+
+@dp.callback_query(Form.models_choice, F.data == "models_specify")
+async def models_specify_callback(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(models_choice="📝 Указать модели")
+    await callback.message.edit_text(
+        "📝 Напишите понравившиеся модели через запятую.\n\n"
+        "Например:\niPhone 17, Galaxy S27, Xiaomi 15\n\n"
+        "✏️ Просто введите текст в чат:"
+    )
+    await state.set_state(Form.models)
+    await callback.answer()
+
+
+@dp.callback_query(Form.models_choice, F.data == "models_skip")
+async def models_skip_callback(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(models="Не указано", models_choice="⏭ Пропустить")
+    await show_confirm(callback, state)
+    await callback.answer()
+
+
+@dp.message(Form.models)
+async def models_message(message: Message, state: FSMContext):
+    await state.update_data(models=message.text)
+    await show_confirm(message, state)
+
+
+async def show_confirm(message_or_callback, state: FSMContext):
+    """Показывает подтверждение заявки"""
+    data = await state.get_data()
+    
+    confirm_text = (
+        "📋 Проверьте данные перед отправкой:\n\n"
+        f"📂 Категория: {data.get('category', 'Не указано')}\n"
+        f"💰 Бюджет: {data.get('budget', 'Не указано')}\n"
+        f"🎯 Приоритет: {data.get('priority', 'Не указано')}\n"
+        f"♻️ Б/У: {data.get('used', 'Не указано')}\n"
+        f"📝 Модели: {data.get('models', 'Не указано')}\n\n"
+        "✅ Всё верно? Нажмите 'Подтвердить заявку'\n"
+        "✏️ Хотите изменить? Нажмите 'Редактировать'\n"
+        "❌ Отменить - 'Отмена'"
+    )
+    
+    if isinstance(message_or_callback, CallbackQuery):
+        await message_or_callback.message.edit_text(
+            confirm_text,
+            reply_markup=confirm_keyboard()
+        )
+        await message_or_callback.answer()
+    else:
+        await message_or_callback.answer(
+            confirm_text,
+            reply_markup=confirm_keyboard()
+        )
+    
+    await state.set_state(Form.confirm)
+
+
+@dp.callback_query(Form.confirm, F.data == "confirm_yes")
+async def confirm_yes_callback(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    if user_id in user_last_request and time.time() - user_last_request[user_id] < 60:
+        await callback.message.edit_text(
+            "⏳ Заявка уже была отправлена недавно. Попробуйте через минуту."
+        )
+        await callback.answer()
+        return
+    
+    user_last_request[user_id] = time.time()
+    
+    await callback.message.edit_text(
+        "📞 Для завершения заявки поделитесь контактом.\n\n"
+        "Нажмите кнопку ниже:",
+        reply_markup=contact_keyboard()
+    )
+    await state.set_state(Form.contact)
+    await callback.answer()
+
+
+@dp.callback_query(Form.confirm, F.data == "confirm_edit")
+async def confirm_edit_callback(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    
+    edit_keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📂 Категория", callback_data="edit_category")],
+            [InlineKeyboardButton(text="💰 Бюджет", callback_data="edit_budget")],
+            [InlineKeyboardButton(text="🎯 Приоритет", callback_data="edit_priority")],
+            [InlineKeyboardButton(text="♻️ Б/У", callback_data="edit_used")],
+            [InlineKeyboardButton(text="📝 Модели", callback_data="edit_models")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")]
+        ]
+    )
+    
+    await callback.message.edit_text(
+        "✏️ Что хотите изменить?",
+        reply_markup=edit_keyboard
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("edit_"))
+async def edit_field_callback(callback: CallbackQuery, state: FSMContext):
+    field = callback.data.replace("edit_", "")
+    data = await state.get_data()
+    
+    if field == "category":
+        await callback.message.edit_text(
+            "📱 Выберите категорию:",
+            reply_markup=categories_keyboard()
+        )
+        await state.set_state(Form.category)
+    
+    elif field == "budget":
+        category = data.get("category", "📱 Смартфоны")
+        await callback.message.edit_text(
+            f"💰 Выберите бюджет для {category}:",
+            reply_markup=budget_keyboard(category)
+        )
+        await state.set_state(Form.budget)
+    
+    elif field == "priority":
+        category = data.get("category", "📱 Смартфоны")
+        await callback.message.edit_text(
+            f"🎯 Выберите приоритет для {category}:",
+            reply_markup=priority_keyboard(category)
+        )
+        await state.set_state(Form.priority)
+    
+    elif field == "used":
+        await callback.message.edit_text(
+            "♻️ Рассматриваете б/у технику?",
+            reply_markup=used_keyboard()
+        )
+        await state.set_state(Form.used)
+    
+    elif field == "models":
+        await callback.message.edit_text(
+            "📝 Напишите модели через запятую\n\n"
+            "Например: iPhone 17, Galaxy S27",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="⏭ Пропустить", callback_data="models_skip_edit")],
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="confirm_edit")]
+                ]
+            )
+        )
+        await state.set_state(Form.models)
+    
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "models_skip_edit")
+async def models_skip_edit_callback(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(models="Не указано")
+    await show_confirm(callback, state)
+    await callback.answer()
+
+
+@dp.callback_query(Form.contact, F.data == "share_contact")
+async def share_contact_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "📞 Пожалуйста, поделитесь контактом, нажав кнопку ниже.\n\n"
+        "🔒 Ваш номер телефона будет использован только для связи.",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📞 Поделиться контактом", request_contact=True)]
+            ],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+    )
+    await callback.answer()
+
+
+@dp.message(Form.contact)
+async def contact_message(message: Message, state: FSMContext):
+    if message.contact:
+        await state.update_data(contact=message.contact.phone_number)
+        
+        await message.answer(
+            "✅ Контакт получен!",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[],
+                resize_keyboard=True
+            )
+        )
+        
+        await finish_request(message, state)
+    else:
+        await message.answer(
+            "⚠️ Пожалуйста, используйте кнопку '📞 Поделиться контактом'",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="📞 Поделиться контактом", request_contact=True)]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+        )
+
+
+async def finish_request(message: Message, state: FSMContext):
+    """Финализация заявки и сохранение в БД"""
+    user_id = message.from_user.id
+    data = await state.get_data()
+    
+    cursor.execute(
+        """INSERT INTO requests(
+            user_id, category, budget, contact, priority, used, models, status
+        ) VALUES(?,?,?,?,?,?,?,?)""",
+        (
+            user_id,
+            data.get("category"),
+            data.get("budget"),
+            data.get("contact"),
+            data.get("priority", "Не указан"),
+            data.get("used", "Не указано"),
+            data.get("models", "Не указано"),
+            "pending"
+        )
+    )
+    db.commit()
+    
+    request_id = cursor.lastrowid
+    request_number = cursor.execute(
+        "SELECT request_number FROM requests WHERE id = ?", (request_id,)
+    ).fetchone()[0]
+
+    await bot.send_message(
+        ADMIN_ID,
+        f"🔥 Новая заявка NoFuss Guide\n\n"
+        f"📋 № заявки: {request_number}\n"
+        f"👤 @{message.from_user.username or 'Нет юзернейма'}\n"
+        f"🆔 {user_id}\n\n"
+        f"📂 Категория: {data.get('category')}\n"
+        f"💰 Бюджет: {data.get('budget')}\n"
+        f"🎯 Приоритет: {data.get('priority', 'Не указан')}\n"
+        f"♻️ Б/У: {data.get('used', 'Не указано')}\n"
+        f"📝 Модели: {data.get('models', 'Не указано')}\n"
+        f"📞 Контакт: {data.get('contact')}\n\n"
+        f"✅ Заявка подтверждена пользователем"
     )
 
+    await message.answer(
+        f"✅ Заявка #{request_number} подтверждена и принята!\n\n"
+        "🎉 Спасибо за обращение в NoFuss Guide!\n\n"
+        "Я изучу ваши требования и подберу наиболее подходящие варианты техники.\n\n"
+        "⏱ Обычно ответ занимает от нескольких часов до одного дня.\n\n"
+        "📢 Пока ожидаете подбор, подпишитесь на наш канал:\nhttps://t.me/NoFussGuide\n\n"
+        "Для новой заявки нажмите 🏠",
+        reply_markup=main_menu_inline()
+    )
 
+    await state.clear()
+
+
+# ---------- НАВИГАЦИЯ НАЗАД ----------
+@dp.callback_query(F.data == "back_to_categories")
+async def back_to_categories(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(Form.category)
+    await callback.message.edit_text(
+        "📱 Шаг 1/5\n\nВыберите категорию техники:",
+        reply_markup=categories_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "back_to_budget")
+async def back_to_budget(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    category = data.get("category", "📱 Смартфоны")
+    await state.set_state(Form.budget)
+    await callback.message.edit_text(
+        f"📱 Шаг 2/5\n\nВы выбрали: {category}\n\n💰 Выберите бюджет:",
+        reply_markup=budget_keyboard(category)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "back_to_priority")
+async def back_to_priority(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    category = data.get("category", "📱 Смартфоны")
+    await state.set_state(Form.priority)
+    await callback.message.edit_text(
+        f"📱 Шаг 3/5\n\nКатегория: {category}\n💰 Бюджет: {data.get('budget')}\n\n🎯 Что для вас наиболее важно?",
+        reply_markup=priority_keyboard(category)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "back_to_used")
+async def back_to_used(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await state.set_state(Form.used)
+    await callback.message.edit_text(
+        f"📱 Шаг 4/5\n\nКатегория: {data.get('category')}\n"
+        f"💰 Бюджет: {data.get('budget')}\n"
+        f"🎯 Приоритет: {data.get('priority')}\n\n"
+        f"♻️ Рассматриваете б/у технику?",
+        reply_markup=used_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "back_to_models")
+async def back_to_models(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(Form.models_choice)
+    await callback.message.edit_text(
+        "📝 Шаг 5/5\n\nХотите указать модели, которые уже рассматриваете?",
+        reply_markup=models_choice_keyboard()
+    )
+    await callback.answer()
+
+
+# ---------- АДМИН-КОМАНДЫ ----------
 @dp.message(Command("admin"))
 async def admin(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -425,365 +907,4 @@ async def export_data(message: Message):
 
     filename = f"nofuss_export_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
 
-    with open(filename, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "№ заявки",
-            "Дата", 
-            "Категория", 
-            "Бюджет", 
-            "Приоритет", 
-            "Б/У", 
-            "Модели", 
-            "Контакт",
-            "Статус",
-            "Дата подтверждения"
-        ])
-        writer.writerows(rows)
-
-    await message.answer_document(FSInputFile(filename))
-    
-    # Удаляем файл после отправки
-    os.remove(filename)
-
-
-@dp.message(Form.category)
-async def category(message: Message, state: FSMContext):
-    if message.text not in CATEGORIES:
-        await message.answer(
-            "Пожалуйста, используйте кнопки меню 👇",
-            reply_markup=main_menu()
-        )
-        return
-
-    await state.update_data(category=message.text)
-    await message.answer(
-        "💰 Шаг 2/3\nВыберите бюджет:",
-        reply_markup=budget_keyboard(message.text)
-    )
-    await state.set_state(Form.budget)
-
-
-@dp.message(Form.budget)
-async def budget(message: Message, state: FSMContext):
-    if message.text == "⬅️ Назад":
-        await go_back(message, state)
-        return
-    
-    if message.text == "🏠 Главное меню":
-        await go_home(message, state)
-        return
-        
-    if message.text not in [b for budgets in BUDGETS.values() for b in budgets]:
-        await message.answer(
-            "Пожалуйста, выберите бюджет из предложенных вариантов 👇",
-            reply_markup=budget_keyboard((await state.get_data()).get("category", "📱 Смартфоны"))
-        )
-        return
-        
-    await state.update_data(budget=message.text)
-    data = await state.get_data()
-    
-    # Для всех категорий сначала спрашиваем приоритет
-    kb = priority_keyboard(data["category"])
-    await message.answer("🎯 Шаг 3/3\nЧто для вас наиболее важно?", reply_markup=kb)
-    await state.set_state(Form.priority)
-
-
-@dp.message(Form.priority)
-async def priority(message: Message, state: FSMContext):
-    if message.text == "⬅️ Назад":
-        await go_back(message, state)
-        return
-    
-    if message.text == "🏠 Главное меню":
-        await go_home(message, state)
-        return
-        
-    data = await state.get_data()
-    if message.text not in PRIORITIES.get(data.get("category", "📱 Смартфоны"), []):
-        await message.answer(
-            "Пожалуйста, выберите приоритет из предложенных вариантов 👇",
-            reply_markup=priority_keyboard(data.get("category", "📱 Смартфоны"))
-        )
-        return
-        
-    await state.update_data(priority=message.text)
-
-    await message.answer(
-        "Рассматриваете б/у технику?",
-        reply_markup=used_keyboard()
-    )
-    await state.set_state(Form.used)
-
-
-@dp.message(Form.used)
-async def used(message: Message, state: FSMContext):
-    if message.text == "⬅️ Назад":
-        await go_back(message, state)
-        return
-    
-    if message.text == "🏠 Главное меню":
-        await go_home(message, state)
-        return
-        
-    if message.text not in ["Да", "Нет", "Не принципиально"]:
-        await message.answer(
-            "Пожалуйста, выберите один из вариантов 👇",
-            reply_markup=used_keyboard()
-        )
-        return
-        
-    await state.update_data(used=message.text)
-
-    await message.answer(
-        "📝 Хотите указать модели, которые уже рассматриваете?",
-        reply_markup=models_choice_keyboard()
-    )
-    await state.set_state(Form.models_choice)
-
-
-@dp.message(Form.models_choice)
-async def models_choice(message: Message, state: FSMContext):
-    if message.text == "⬅️ Назад":
-        await go_back(message, state)
-        return
-    
-    if message.text == "🏠 Главное меню":
-        await go_home(message, state)
-        return
-        
-    if message.text == "📝 Указать модели":
-        await state.update_data(models_choice="📝 Указать модели")
-        await message.answer(
-            "Напишите понравившиеся модели через запятую.\n\nНапример:\niPhone 17, Galaxy S27",
-            reply_markup=back_menu()
-        )
-        await state.set_state(Form.models)
-        return
-
-    if message.text == "⏭ Пропустить":
-        await state.update_data(models="Не указано", models_choice="⏭ Пропустить")
-        await show_confirm(message, state)
-        return
-
-    await message.answer(
-        "⚠️ Используйте кнопки меню.",
-        reply_markup=models_choice_keyboard()
-    )
-
-
-@dp.message(Form.models)
-async def models(message: Message, state: FSMContext):
-    if message.text == "⬅️ Назад":
-        await go_back(message, state)
-        return
-        
-    if message.text == "🏠 Главное меню":
-        await go_home(message, state)
-        return
-        
-    await state.update_data(models=message.text)
-    await show_confirm(message, state)
-
-
-async def show_confirm(message: Message, state: FSMContext):
-    """Показывает подтверждение заявки"""
-    data = await state.get_data()
-    
-    confirm_text = (
-        "📋 Проверьте данные перед отправкой:\n\n"
-        f"📂 Категория: {data.get('category', 'Не указано')}\n"
-        f"💰 Бюджет: {data.get('budget', 'Не указано')}\n"
-        f"🎯 Приоритет: {data.get('priority', 'Не указано')}\n"
-        f"♻️ Б/У: {data.get('used', 'Не указано')}\n"
-        f"📝 Модели: {data.get('models', 'Не указано')}\n\n"
-        "✅ Всё верно? Нажмите 'Подтвердить заявку'\n"
-        "❌ Хотите изменить? Нажмите '⬅️ Назад'"
-    )
-    
-    await message.answer(confirm_text, reply_markup=confirm_menu())
-    await state.set_state(Form.confirm)
-
-
-@dp.message(Form.confirm)
-async def confirm_request(message: Message, state: FSMContext):
-    if message.text == "⬅️ Назад":
-        await go_back(message, state)
-        return
-        
-    if message.text == "🏠 Главное меню":
-        await go_home(message, state)
-        return
-        
-    if message.text != "✅ Подтвердить заявку":
-        await message.answer(
-            "Пожалуйста, используйте кнопки меню 👇",
-            reply_markup=confirm_menu()
-        )
-        return
-    
-    # Проверяем, не отправлял ли пользователь заявку недавно
-    user_id = message.from_user.id
-    if user_id in user_last_request and time.time() - user_last_request[user_id] < 60:
-        await message.answer("⏳ Заявка уже была отправлена недавно. Попробуйте через минуту.")
-        return
-    
-    user_last_request[user_id] = time.time()
-    
-    await finish_request(message, state)
-
-
-async def finish_request(message: Message, state: FSMContext):
-    """Финализация заявки и сохранение в БД"""
-    user_id = message.from_user.id
-    data = await state.get_data()
-    
-    # Проверяем наличие контакта
-    if not data.get("contact"):
-        await message.answer(
-            "⚠️ Контакт не указан. Пожалуйста, поделитесь контактом.",
-            reply_markup=contact_keyboard()
-        )
-        await state.set_state(Form.contact)
-        return
-    
-    # Сохраняем все поля в БД
-    cursor.execute(
-        """INSERT INTO requests(
-            user_id, category, budget, contact, priority, used, models, status
-        ) VALUES(?,?,?,?,?,?,?,?)""",
-        (
-            user_id,
-            data.get("category"),
-            data.get("budget"),
-            data.get("contact"),
-            data.get("priority", "Не указан"),
-            data.get("used", "Не указано"),
-            data.get("models", "Не указано"),
-            "pending"
-        )
-    )
-    db.commit()
-    
-    # Получаем номер заявки
-    request_id = cursor.lastrowid
-    request_number = cursor.execute(
-        "SELECT request_number FROM requests WHERE id = ?", (request_id,)
-    ).fetchone()[0]
-
-    # Отправляем админу
-    await bot.send_message(
-        ADMIN_ID,
-        f"🔥 Новая заявка NoFuss Guide\n\n"
-        f"📋 № заявки: {request_number}\n"
-        f"👤 @{message.from_user.username or 'Нет юзернейма'}\n"
-        f"🆔 {user_id}\n\n"
-        f"📂 Категория: {data.get('category')}\n"
-        f"💰 Бюджет: {data.get('budget')}\n"
-        f"🎯 Приоритет: {data.get('priority', 'Не указан')}\n"
-        f"♻️ Б/У: {data.get('used', 'Не указано')}\n"
-        f"📝 Модели: {data.get('models', 'Не указано')}\n"
-        f"📞 Контакт: {data.get('contact')}\n\n"
-        f"✅ Заявка подтверждена пользователем"
-    )
-
-    # Отправляем сообщение пользователю с номером заявки
-    await message.answer(
-        f"✅ Заявка #{request_number} подтверждена и принята!\n\n"
-        "Спасибо за обращение в NoFuss Guide.\n\n"
-        "Я изучу ваши требования и подберу наиболее подходящие варианты техники.\n\n"
-        "⏱ Обычно ответ занимает от нескольких часов до одного дня.\n\n"
-        "📢 Пока ожидаете подбор:\nhttps://t.me/NoFussGuide",
-        reply_markup=restart_keyboard(),
-    )
-
-    await state.clear()
-
-
-@dp.message(Form.contact)
-async def contact(message: Message, state: FSMContext):
-    if message.text == "⬅️ Назад":
-        await go_back(message, state)
-        return
-        
-    if message.text == "🏠 Главное меню":
-        await go_home(message, state)
-        return
-
-    if message.contact:
-        await state.update_data(contact=message.contact.phone_number)
-        await show_confirm(message, state)
-    else:
-        await message.answer(
-            "⚠️ Пожалуйста, используйте кнопку '📞 Поделиться контактом'",
-            reply_markup=contact_keyboard()
-        )
-
-
-@dp.message(F.text == "🔄 Начать заново")
-async def restart(message: Message, state: FSMContext):
-    await start(message, state)
-
-
-@dp.message()
-async def fallback(message: Message):
-    current_state = await state.get_state()
-    
-    if current_state:
-        state_name = current_state.split(":")[-1]
-        if state_name == "Form:category":
-            await message.answer(
-                "Пожалуйста, выберите категорию из меню 👇",
-                reply_markup=main_menu()
-            )
-        elif state_name == "Form:budget":
-            data = await state.get_data()
-            await message.answer(
-                "Пожалуйста, выберите бюджет из предложенных вариантов 👇",
-                reply_markup=budget_keyboard(data.get("category", "📱 Смартфоны"))
-            )
-        elif state_name == "Form:priority":
-            data = await state.get_data()
-            await message.answer(
-                "Пожалуйста, выберите приоритет из предложенных вариантов 👇",
-                reply_markup=priority_keyboard(data.get("category", "📱 Смартфоны"))
-            )
-        elif state_name == "Form:used":
-            await message.answer(
-                "Пожалуйста, выберите один из вариантов 👇",
-                reply_markup=used_keyboard()
-            )
-        elif state_name == "Form:models_choice":
-            await message.answer(
-                "Пожалуйста, используйте кнопки меню 👇",
-                reply_markup=models_choice_keyboard()
-            )
-        elif state_name == "Form:contact":
-            await message.answer(
-                "Пожалуйста, используйте кнопку '📞 Поделиться контактом'",
-                reply_markup=contact_keyboard()
-            )
-        elif state_name == "Form:confirm":
-            await message.answer(
-                "Пожалуйста, используйте кнопки меню 👇",
-                reply_markup=confirm_menu()
-            )
-        else:
-            await message.answer(
-                "Используйте кнопки меню ниже 👇",
-                reply_markup=main_menu()
-            )
-    else:
-        await message.answer(
-            "Используйте кнопки меню ниже 👇",
-            reply_markup=main_menu()
-        )
-
-
-async def main():
-    await start_web_server()
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    with open(filename, "w", newline="", encoding="utf-8-sig") as
