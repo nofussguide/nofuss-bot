@@ -3,7 +3,10 @@ import os
 import time
 import sqlite3
 import csv
-from datetime import datetime
+import re
+import json
+from datetime import datetime, timedelta
+from functools import wraps
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
@@ -24,6 +27,39 @@ bot = Bot(TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 user_last_request = {}
+user_sessions = {}
+
+
+# ---------- RATE LIMITING ----------
+def rate_limit(limit_per_minute=5):
+    """Декоратор для ограничения частоты запросов"""
+    def decorator(func):
+        rate_limiter = {}
+        
+        @wraps(func)
+        async def wrapper(message: Message, *args, **kwargs):
+            user_id = message.from_user.id
+            now = time.time()
+            
+            if user_id in rate_limiter:
+                requests = rate_limiter[user_id]
+                # Оставляем только запросы за последнюю минуту
+                requests = [t for t in requests if now - t < 60]
+                
+                if len(requests) >= limit_per_minute:
+                    await message.answer(
+                        "⏳ Слишком много запросов! Подождите минуту."
+                    )
+                    return
+                
+                requests.append(now)
+                rate_limiter[user_id] = requests
+            else:
+                rate_limiter[user_id] = [now]
+            
+            return await func(message, *args, **kwargs)
+        return wrapper
+    return decorator
 
 
 # ---------- HEALTH CHECK ----------
@@ -46,7 +82,7 @@ async def start_web_server():
 
 # ---------- MIGRATION ----------
 def migrate_db():
-    """Миграция базы данных - добавляет новые колонки если их нет"""
+    """Миграция базы данных"""
     cursor.execute("PRAGMA table_info(requests)")
     columns = [col[1] for col in cursor.fetchall()]
     
@@ -62,6 +98,17 @@ def migrate_db():
         cursor.execute("ALTER TABLE requests ADD COLUMN confirmed_at TIMESTAMP")
     if 'request_number' not in columns:
         cursor.execute("ALTER TABLE requests ADD COLUMN request_number INTEGER")
+    if 'admin_comment' not in columns:
+        cursor.execute("ALTER TABLE requests ADD COLUMN admin_comment TEXT")
+    
+    # Таблица для черновиков
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS drafts (
+        user_id INTEGER PRIMARY KEY,
+        data TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
     
     db.commit()
 # --------------------------------
@@ -72,7 +119,9 @@ cursor = db.cursor()
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY
+    user_id INTEGER PRIMARY KEY,
+    username TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
 
@@ -89,14 +138,15 @@ CREATE TABLE IF NOT EXISTS requests (
     status TEXT DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     confirmed_at TIMESTAMP,
-    request_number INTEGER
+    request_number INTEGER,
+    admin_comment TEXT
 )
 """)
 db.commit()
 
 migrate_db()
 
-# Создаём триггер для автоинкремента номера заявки
+# Триггер для номера заявки
 cursor.execute("""
 CREATE TRIGGER IF NOT EXISTS set_request_number 
 AFTER INSERT ON requests
@@ -205,11 +255,75 @@ class Form(StatesGroup):
     models = State()
     contact = State()
     confirm = State()
+    admin_chat = State()  # Для чата с админом
 
 
-# ---------- INLINE КЛАВИАТУРЫ ----------
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
+def get_progress_bar(step, total=5):
+    """Прогресс-бар"""
+    filled = "█" * step
+    empty = "░" * (total - step)
+    return f"{filled}{empty}"
+
+def get_step_text(step, total=5):
+    """Текст шага"""
+    return f"Шаг {step}/{total}"
+
+def validate_phone(phone):
+    """Валидация номера телефона"""
+    cleaned = re.sub(r'[\s\-\(\)]', '', phone)
+    patterns = [
+        r'^\+?\d{10,15}$',
+        r'^8\d{10}$',
+        r'^7\d{10}$',
+    ]
+    return any(re.match(p, cleaned) for p in patterns)
+
+def save_draft(user_id, data):
+    """Сохраняет черновик"""
+    cursor.execute(
+        "INSERT OR REPLACE INTO drafts(user_id, data, updated_at) VALUES(?, ?, CURRENT_TIMESTAMP)",
+        (user_id, json.dumps(data, ensure_ascii=False))
+    )
+    db.commit()
+
+def load_draft(user_id):
+    """Загружает черновик"""
+    row = cursor.execute(
+        "SELECT data FROM drafts WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return json.loads(row[0]) if row else {}
+
+def delete_draft(user_id):
+    """Удаляет черновик"""
+    cursor.execute("DELETE FROM drafts WHERE user_id = ?", (user_id,))
+    db.commit()
+
+def get_status_emoji(status):
+    """Эмодзи для статуса"""
+    status_map = {
+        'pending': '⏳',
+        'processing': '🔄',
+        'confirmed': '✅',
+        'completed': '🎉',
+        'cancelled': '❌'
+    }
+    return status_map.get(status, '📌')
+
+def get_status_text(status):
+    """Текст статуса"""
+    status_map = {
+        'pending': 'В обработке',
+        'processing': 'В работе',
+        'confirmed': 'Подтверждена',
+        'completed': 'Выполнена',
+        'cancelled': 'Отменена'
+    }
+    return status_map.get(status, status)
+
+
+# ---------- КЛАВИАТУРЫ ----------
 def categories_keyboard():
-    """Клавиатура для выбора категории"""
     buttons = []
     row = []
     for i, (name, value) in enumerate(CATEGORIES.items(), 1):
@@ -228,7 +342,6 @@ def categories_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def budget_keyboard(category):
-    """Клавиатура для выбора бюджета"""
     buttons = []
     for label, callback in BUDGETS.get(category, []):
         buttons.append([InlineKeyboardButton(text=label, callback_data=callback)])
@@ -241,7 +354,6 @@ def budget_keyboard(category):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def priority_keyboard(category):
-    """Клавиатура для выбора приоритета"""
     buttons = []
     for label, callback in PRIORITIES.get(category, []):
         buttons.append([InlineKeyboardButton(text=label, callback_data=callback)])
@@ -254,7 +366,6 @@ def priority_keyboard(category):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def used_keyboard():
-    """Клавиатура для выбора Б/У"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да", callback_data="used_yes")],
@@ -268,7 +379,6 @@ def used_keyboard():
     )
 
 def models_choice_keyboard():
-    """Клавиатура для выбора указания моделей"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📝 Указать модели", callback_data="models_specify")],
@@ -281,7 +391,6 @@ def models_choice_keyboard():
     )
 
 def confirm_keyboard():
-    """Клавиатура подтверждения"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Подтвердить заявку", callback_data="confirm_yes")],
@@ -293,7 +402,6 @@ def confirm_keyboard():
     )
 
 def contact_keyboard():
-    """Клавиатура для контакта"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -310,7 +418,6 @@ def contact_keyboard():
     )
 
 def main_menu_inline():
-    """Главное меню с inline-кнопками"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -326,16 +433,70 @@ def main_menu_inline():
             ]
         ]
     )
-# ----------------------------------
+
+def admin_request_keyboard(request_id, request_number):
+    """Клавиатура для админа для управления заявкой"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔄 В работу", 
+                    callback_data=f"admin_status_{request_id}_processing"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Подтвердить", 
+                    callback_data=f"admin_status_{request_id}_confirmed"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🎉 Выполнена", 
+                    callback_data=f"admin_status_{request_id}_completed"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отменить", 
+                    callback_data=f"admin_status_{request_id}_cancelled"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💬 Написать пользователю", 
+                    callback_data=f"admin_chat_{request_id}"
+                )
+            ]
+        ]
+    )
 
 
-# ---------- ОБРАБОТЧИКИ ----------
+# ---------- ОСНОВНЫЕ ОБРАБОТЧИКИ ----------
 @dp.message(CommandStart())
 async def start(message: Message, state: FSMContext):
     await state.clear()
-
-    cursor.execute("INSERT OR IGNORE INTO users(user_id) VALUES(?)", (message.from_user.id,))
+    
+    # Сохраняем пользователя
+    cursor.execute(
+        "INSERT OR IGNORE INTO users(user_id, username) VALUES(?, ?)",
+        (message.from_user.id, message.from_user.username or '')
+    )
     db.commit()
+    
+    # Проверяем черновик
+    draft = load_draft(message.from_user.id)
+    if draft:
+        await message.answer(
+            "📝 У вас есть незавершённая заявка. Хотите продолжить?",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="✅ Продолжить", callback_data="continue_draft")],
+                    [InlineKeyboardButton(text="❌ Начать заново", callback_data="home")]
+                ]
+            )
+        )
+        return
 
     await message.answer(
         "👋 Добро пожаловать в NoFuss Guide\n\n"
@@ -348,9 +509,52 @@ async def start(message: Message, state: FSMContext):
     )
 
 
+@dp.callback_query(F.data == "continue_draft")
+async def continue_draft_callback(callback: CallbackQuery, state: FSMContext):
+    draft = load_draft(callback.from_user.id)
+    if draft:
+        # Восстанавливаем данные
+        for key, value in draft.items():
+            await state.update_data({key: value})
+        
+        # Определяем последний шаг
+        last_step = draft.get('_last_step', 'category')
+        
+        await callback.message.edit_text(
+            "📝 Продолжаем оформление заявки с того места, где вы остановились:",
+            reply_markup=main_menu_inline()
+        )
+        await callback.answer()
+        
+        # Переходим к последнему шагу
+        if last_step == 'category':
+            await new_request_callback(callback, state)
+        elif last_step == 'budget':
+            data = await state.get_data()
+            category = data.get("category", "📱 Смартфоны")
+            await callback.message.edit_text(
+                f"📱 Шаг 2/5\n\nВы выбрали: {category}\n\n💰 Выберите бюджет:",
+                reply_markup=budget_keyboard(category)
+            )
+            await state.set_state(Form.budget)
+        elif last_step == 'priority':
+            data = await state.get_data()
+            category = data.get("category", "📱 Смартфоны")
+            await callback.message.edit_text(
+                f"📱 Шаг 3/5\n\nКатегория: {category}\n💰 Бюджет: {data.get('budget')}\n\n🎯 Что для вас наиболее важно?",
+                reply_markup=priority_keyboard(category)
+            )
+            await state.set_state(Form.priority)
+        # ... и так далее для остальных шагов
+    else:
+        await callback.answer("❌ Черновик не найден")
+        await home_callback(callback, state)
+
+
 @dp.callback_query(F.data == "home")
 async def home_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
+    delete_draft(callback.from_user.id)
     await callback.message.edit_text(
         "🏠 Вы в главном меню\n\nВыберите действие:",
         reply_markup=main_menu_inline()
@@ -361,8 +565,10 @@ async def home_callback(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "new_request")
 async def new_request_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
+    delete_draft(callback.from_user.id)
     await callback.message.edit_text(
-        "📱 Шаг 1/5\n\nВыберите категорию техники:",
+        f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
+        "📱 Выберите категорию техники:",
         reply_markup=categories_keyboard()
     )
     await state.set_state(Form.category)
@@ -407,7 +613,7 @@ async def contact_direct_callback(callback: CallbackQuery):
 @dp.callback_query(F.data == "my_requests")
 async def my_requests_callback(callback: CallbackQuery):
     requests = cursor.execute(
-        """SELECT request_number, category, status, created_at 
+        """SELECT id, request_number, category, status, created_at, admin_comment
         FROM requests WHERE user_id=? 
         ORDER BY created_at DESC LIMIT 10""",
         (callback.from_user.id,)
@@ -422,19 +628,15 @@ async def my_requests_callback(callback: CallbackQuery):
         await callback.answer()
         return
     
-    status_emoji = {
-        'pending': '⏳',
-        'processing': '🔄',
-        'confirmed': '✅',
-        'completed': '🎉',
-        'cancelled': '❌'
-    }
-    
     text = "📋 Ваши последние заявки:\n\n"
     for req in requests:
-        status = status_emoji.get(req[2], '📌')
-        date = req[3][:10] if req[3] else 'Дата неизвестна'
-        text += f"#{req[0]} {status} {req[1]}\n   {date}\n\n"
+        status = get_status_emoji(req[3])
+        date = req[4][:10] if req[4] else 'Дата неизвестна'
+        text += f"#{req[1]} {status} {get_status_text(req[3])}\n"
+        text += f"   {req[2]} - {date}\n"
+        if req[5]:  # admin_comment
+            text += f"   💬 {req[5]}\n"
+        text += "\n"
     
     text += "Нажмите 🏠 для возврата в меню"
     
@@ -462,10 +664,12 @@ async def category_callback(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Ошибка выбора категории")
         return
     
-    await state.update_data(category=category_name)
+    await state.update_data(category=category_name, _last_step='budget')
+    save_draft(callback.from_user.id, await state.get_data())
     
     await callback.message.edit_text(
-        f"📱 Шаг 2/5\n\nВы выбрали: {category_name}\n\n💰 Выберите бюджет:",
+        f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
+        f"Вы выбрали: {category_name}\n\n💰 Выберите бюджет:",
         reply_markup=budget_keyboard(category_name)
     )
     await state.set_state(Form.budget)
@@ -487,10 +691,12 @@ async def budget_callback(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Ошибка выбора бюджета")
         return
     
-    await state.update_data(budget=budget_text)
+    await state.update_data(budget=budget_text, _last_step='priority')
+    save_draft(callback.from_user.id, await state.get_data())
     
     await callback.message.edit_text(
-        f"📱 Шаг 3/5\n\nКатегория: {category}\n💰 Бюджет: {budget_text}\n\n🎯 Что для вас наиболее важно?",
+        f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
+        f"Категория: {category}\n💰 Бюджет: {budget_text}\n\n🎯 Что для вас наиболее важно?",
         reply_markup=priority_keyboard(category)
     )
     await state.set_state(Form.priority)
@@ -512,10 +718,12 @@ async def priority_callback(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Ошибка выбора приоритета")
         return
     
-    await state.update_data(priority=priority_text)
+    await state.update_data(priority=priority_text, _last_step='used')
+    save_draft(callback.from_user.id, await state.get_data())
     
     await callback.message.edit_text(
-        f"📱 Шаг 4/5\n\nКатегория: {category}\n💰 Бюджет: {data.get('budget')}\n"
+        f"{get_progress_bar(4)} {get_step_text(4)}\n\n"
+        f"Категория: {category}\n💰 Бюджет: {data.get('budget')}\n"
         f"🎯 Приоритет: {priority_text}\n\n♻️ Рассматриваете б/у технику?",
         reply_markup=used_keyboard()
     )
@@ -532,10 +740,12 @@ async def used_callback(callback: CallbackQuery, state: FSMContext):
     }
     
     used_text = used_map.get(callback.data, "Не указано")
-    await state.update_data(used=used_text)
+    await state.update_data(used=used_text, _last_step='models_choice')
+    save_draft(callback.from_user.id, await state.get_data())
     
     await callback.message.edit_text(
-        "📝 Шаг 5/5\n\nХотите указать модели, которые уже рассматриваете?",
+        f"{get_progress_bar(5)} {get_step_text(5)}\n\n"
+        "📝 Хотите указать модели, которые уже рассматриваете?",
         reply_markup=models_choice_keyboard()
     )
     await state.set_state(Form.models_choice)
@@ -544,7 +754,7 @@ async def used_callback(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(Form.models_choice, F.data == "models_specify")
 async def models_specify_callback(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(models_choice="📝 Указать модели")
+    await state.update_data(models_choice="📝 Указать модели", _last_step='models')
     await callback.message.edit_text(
         "📝 Напишите понравившиеся модели через запятую.\n\n"
         "Например:\niPhone 17, Galaxy S27, Xiaomi 15\n\n"
@@ -563,12 +773,11 @@ async def models_skip_callback(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(Form.models)
 async def models_message(message: Message, state: FSMContext):
-    await state.update_data(models=message.text)
+    await state.update_data(models=message.text, _last_step='confirm')
     await show_confirm(message, state)
 
 
 async def show_confirm(message_or_callback, state: FSMContext):
-    """Показывает подтверждение заявки"""
     data = await state.get_data()
     
     confirm_text = (
@@ -601,6 +810,8 @@ async def show_confirm(message_or_callback, state: FSMContext):
 @dp.callback_query(Form.confirm, F.data == "confirm_yes")
 async def confirm_yes_callback(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
+    
+    # Rate limiting
     if user_id in user_last_request and time.time() - user_last_request[user_id] < 60:
         await callback.message.edit_text(
             "⏳ Заявка уже была отправлена недавно. Попробуйте через минуту."
@@ -621,8 +832,6 @@ async def confirm_yes_callback(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(Form.confirm, F.data == "confirm_edit")
 async def confirm_edit_callback(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    
     edit_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📂 Категория", callback_data="edit_category")],
@@ -704,7 +913,7 @@ async def share_contact_callback(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "📞 Пожалуйста, поделитесь контактом, нажав кнопку ниже.\n\n"
         "🔒 Ваш номер телефона будет использован только для связи.",
-        reply_markup=ReplyKeyboardMarkup(
+         reply_markup=ReplyKeyboardMarkup(
             keyboard=[
                 [KeyboardButton(text="📞 Поделиться контактом", request_contact=True)]
             ],
@@ -718,7 +927,22 @@ async def share_contact_callback(callback: CallbackQuery, state: FSMContext):
 @dp.message(Form.contact)
 async def contact_message(message: Message, state: FSMContext):
     if message.contact:
-        await state.update_data(contact=message.contact.phone_number)
+        # Валидация телефона
+        phone = message.contact.phone_number
+        if not validate_phone(phone):
+            await message.answer(
+                "⚠️ Похоже, вы ввели некорректный номер. Пожалуйста, используйте кнопку '📞 Поделиться контактом'",
+                reply_markup=ReplyKeyboardMarkup(
+                    keyboard=[
+                        [KeyboardButton(text="📞 Поделиться контактом", request_contact=True)]
+                    ],
+                    resize_keyboard=True,
+                    one_time_keyboard=True
+                )
+            )
+            return
+        
+        await state.update_data(contact=phone)
         
         await message.answer(
             "✅ Контакт получен!",
@@ -743,7 +967,6 @@ async def contact_message(message: Message, state: FSMContext):
 
 
 async def finish_request(message: Message, state: FSMContext):
-    """Финализация заявки и сохранение в БД"""
     user_id = message.from_user.id
     data = await state.get_data()
     
@@ -768,9 +991,12 @@ async def finish_request(message: Message, state: FSMContext):
     request_number = cursor.execute(
         "SELECT request_number FROM requests WHERE id = ?", (request_id,)
     ).fetchone()[0]
-
-    await bot.send_message(
-        ADMIN_ID,
+    
+    # Удаляем черновик
+    delete_draft(user_id)
+    
+    # Отправляем админу с кнопками управления
+    admin_text = (
         f"🔥 Новая заявка NoFuss Guide\n\n"
         f"📋 № заявки: {request_number}\n"
         f"👤 @{message.from_user.username or 'Нет юзернейма'}\n"
@@ -782,6 +1008,12 @@ async def finish_request(message: Message, state: FSMContext):
         f"📝 Модели: {data.get('models', 'Не указано')}\n"
         f"📞 Контакт: {data.get('contact')}\n\n"
         f"✅ Заявка подтверждена пользователем"
+    )
+    
+    await bot.send_message(
+        ADMIN_ID,
+        admin_text,
+        reply_markup=admin_request_keyboard(request_id, request_number)
     )
 
     await message.answer(
@@ -797,12 +1029,293 @@ async def finish_request(message: Message, state: FSMContext):
     await state.clear()
 
 
-# ---------- НАВИГАЦИЯ НАЗАД ----------
+# ---------- АДМИН: УПРАВЛЕНИЕ СТАТУСАМИ ----------
+@dp.callback_query(F.data.startswith("admin_status_"))
+async def admin_status_callback(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    parts = callback.data.split("_")
+    request_id = int(parts[2])
+    new_status = parts[3]
+    
+    # Обновляем статус
+    cursor.execute(
+        "UPDATE requests SET status = ?, confirmed_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (new_status, request_id)
+    )
+    db.commit()
+    
+    # Получаем данные заявки
+    request_data = cursor.execute(
+        "SELECT user_id, request_number FROM requests WHERE id = ?", (request_id,)
+    ).fetchone()
+    
+    if request_data:
+        user_id, request_number = request_data
+        
+        # Отправляем уведомление пользователю
+        status_text = get_status_text(new_status)
+        status_emoji = get_status_emoji(new_status)
+        
+        await bot.send_message(
+            user_id,
+            f"{status_emoji} Статус вашей заявки #{request_number} обновлён!\n\n"
+            f"Новый статус: {status_text}\n\n"
+            "По всем вопросам вы можете связаться с нами напрямую."
+        )
+    
+    await callback.message.edit_text(
+        f"{callback.message.text}\n\n✅ Статус обновлён на: {get_status_text(new_status)}"
+    )
+    await callback.answer(f"✅ Статус изменён на {get_status_text(new_status)}")
+
+
+# ---------- АДМИН: ЧАТ С ПОЛЬЗОВАТЕЛЕМ ----------
+@dp.callback_query(F.data.startswith("admin_chat_"))
+async def admin_chat_callback(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    parts = callback.data.split("_")
+    request_id = int(parts[2])
+    
+    request_data = cursor.execute(
+        "SELECT user_id, request_number FROM requests WHERE id = ?", (request_id,)
+    ).fetchone()
+    
+    if not request_data:
+        await callback.answer("❌ Заявка не найдена")
+        return
+    
+    user_id, request_number = request_data
+    
+    await state.update_data(chat_user_id=user_id, chat_request_id=request_id)
+    await state.set_state(Form.admin_chat)
+    
+    await callback.message.edit_text(
+        f"💬 Чат с пользователем (заявка #{request_number})\n\n"
+        "Напишите сообщение, которое будет отправлено пользователю.\n"
+        "Для отмены нажмите /cancel",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_chat")]
+            ]
+        )
+    )
+    await callback.answer()
+
+
+@dp.message(Form.admin_chat)
+async def admin_chat_message(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    data = await state.get_data()
+    user_id = data.get('chat_user_id')
+    request_id = data.get('chat_request_id')
+    
+    if not user_id:
+        await message.answer("❌ Ошибка: пользователь не найден")
+        await state.clear()
+        return
+    
+    # Отправляем сообщение пользователю
+    try:
+        await bot.send_message(
+            user_id,
+            f"💬 Сообщение от администратора (заявка #{request_id}):\n\n{message.text}"
+        )
+        await message.answer("✅ Сообщение отправлено пользователю!")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка отправки: {e}")
+
+
+@dp.callback_query(F.data == "cancel_chat")
+async def cancel_chat_callback(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "❌ Чат с пользователем закрыт",
+        reply_markup=main_menu_inline()
+    )
+    await callback.answer()
+
+
+# ---------- РАСШИРЕННАЯ АДМИН-ПАНЕЛЬ ----------
+@dp.message(Command("admin"))
+async def admin(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    # Общая статистика
+    users = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    requests_total = cursor.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
+    
+    # Статистика по статусам
+    pending = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='pending'").fetchone()[0]
+    processing = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='processing'").fetchone()[0]
+    confirmed = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='confirmed'").fetchone()[0]
+    completed = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='completed'").fetchone()[0]
+    cancelled = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='cancelled'").fetchone()[0]
+
+    # Статистика за неделю
+    week_stats = cursor.execute("""
+        SELECT DATE(created_at) as date, COUNT(*) 
+        FROM requests 
+        WHERE created_at >= DATE('now', '-7 days')
+        GROUP BY DATE(created_at)
+        ORDER BY date DESC
+    """).fetchall()
+
+    # Топ категорий
+    top_categories = cursor.execute("""
+        SELECT category, COUNT(*) as cnt
+        FROM requests
+        WHERE created_at >= DATE('now', '-30 days')
+        GROUP BY category
+        ORDER BY cnt DESC
+        LIMIT 5
+    """).fetchall()
+
+    # Среднее время ответа
+    avg_response = cursor.execute("""
+        SELECT AVG(strftime('%s', confirmed_at) - strftime('%s', created_at)) / 3600.0
+        FROM requests
+        WHERE confirmed_at IS NOT NULL
+    """).fetchone()[0]
+
+    text = f"📊 NoFuss Guide Analytics\n\n"
+    text += f"👥 Пользователей: {users}\n"
+    text += f"📨 Всего заявок: {requests_total}\n\n"
+    text += f"⏳ В обработке: {pending}\n"
+    text += f"🔄 В работе: {processing}\n"
+    text += f"✅ Подтверждено: {confirmed}\n"
+    text += f"🎉 Выполнено: {completed}\n"
+    text += f"❌ Отменено: {cancelled}\n\n"
+    
+    if avg_response:
+        text += f"⏱ Среднее время ответа: {avg_response:.1f} ч.\n\n"
+    
+    text += f"📊 Последние 7 дней:\n"
+    for date, count in week_stats:
+        text += f"  • {date}: {count} заявок\n"
+    
+    if top_categories:
+        text += f"\n🏆 Топ категорий (за месяц):\n"
+        for cat, cnt in top_categories:
+            text += f"  • {cat}: {cnt}\n"
+
+    # Кнопка для просмотра последних заявок
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Последние заявки", callback_data="admin_recent")]
+        ]
+    )
+
+    await message.answer(text, reply_markup=keyboard)
+
+
+@dp.callback_query(F.data == "admin_recent")
+async def admin_recent_callback(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    requests = cursor.execute(
+        """SELECT id, request_number, user_id, category, status, created_at
+        FROM requests 
+        ORDER BY created_at DESC LIMIT 10"""
+    ).fetchall()
+    
+    if not requests:
+        await callback.answer("❌ Нет заявок")
+        return
+    
+    text = "📋 Последние 10 заявок:\n\n"
+    for req in requests:
+        status = get_status_emoji(req[4])
+        date = req[5][:16] if req[5] else ''
+        text += f"#{req[1]} {status} {req[3]}\n"
+        text += f"   {date} | {get_status_text(req[4])}\n\n"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_recent")],
+                [InlineKeyboardButton(text="🏠 Назад", callback_data="admin_back")]
+            ]
+        )
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_back")
+async def admin_back_callback(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    await callback.message.delete()
+    await admin(callback.message)
+
+
+# ---------- РАСШИРЕННЫЙ ЭКСПОРТ ----------
+@dp.message(Command("export"))
+async def export_data(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    # Экспорт с фильтром по дате
+    rows = cursor.execute(
+        """SELECT 
+            request_number,
+            created_at, 
+            category, 
+            budget, 
+            priority, 
+            used, 
+            models, 
+            contact, 
+            status,
+            confirmed_at,
+            admin_comment
+        FROM requests 
+        ORDER BY created_at DESC"""
+    ).fetchall()
+
+    filename = f"nofuss_export_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+
+    with open(filename, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "№ заявки",
+            "Дата создания", 
+            "Категория", 
+            "Бюджет", 
+            "Приоритет", 
+            "Б/У", 
+            "Модели", 
+            "Контакт",
+            "Статус",
+            "Дата подтверждения",
+            "Комментарий админа"
+        ])
+        writer.writerows(rows)
+
+    await message.answer_document(FSInputFile(filename))
+    os.remove(filename)
+
+
+# ---------- НАВИГАЦИЯ ----------
 @dp.callback_query(F.data == "back_to_categories")
 async def back_to_categories(callback: CallbackQuery, state: FSMContext):
     await state.set_state(Form.category)
     await callback.message.edit_text(
-        "📱 Шаг 1/5\n\nВыберите категорию техники:",
+        f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
+        "📱 Выберите категорию техники:",
         reply_markup=categories_keyboard()
     )
     await callback.answer()
@@ -814,7 +1327,8 @@ async def back_to_budget(callback: CallbackQuery, state: FSMContext):
     category = data.get("category", "📱 Смартфоны")
     await state.set_state(Form.budget)
     await callback.message.edit_text(
-        f"📱 Шаг 2/5\n\nВы выбрали: {category}\n\n💰 Выберите бюджет:",
+        f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
+        f"Вы выбрали: {category}\n\n💰 Выберите бюджет:",
         reply_markup=budget_keyboard(category)
     )
     await callback.answer()
@@ -826,7 +1340,8 @@ async def back_to_priority(callback: CallbackQuery, state: FSMContext):
     category = data.get("category", "📱 Смартфоны")
     await state.set_state(Form.priority)
     await callback.message.edit_text(
-        f"📱 Шаг 3/5\n\nКатегория: {category}\n💰 Бюджет: {data.get('budget')}\n\n🎯 Что для вас наиболее важно?",
+        f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
+        f"Категория: {category}\n💰 Бюджет: {data.get('budget')}\n\n🎯 Что для вас наиболее важно?",
         reply_markup=priority_keyboard(category)
     )
     await callback.answer()
@@ -837,7 +1352,8 @@ async def back_to_used(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     await state.set_state(Form.used)
     await callback.message.edit_text(
-        f"📱 Шаг 4/5\n\nКатегория: {data.get('category')}\n"
+        f"{get_progress_bar(4)} {get_step_text(4)}\n\n"
+        f"Категория: {data.get('category')}\n"
         f"💰 Бюджет: {data.get('budget')}\n"
         f"🎯 Приоритет: {data.get('priority')}\n\n"
         f"♻️ Рассматриваете б/у технику?",
@@ -850,83 +1366,11 @@ async def back_to_used(callback: CallbackQuery, state: FSMContext):
 async def back_to_models(callback: CallbackQuery, state: FSMContext):
     await state.set_state(Form.models_choice)
     await callback.message.edit_text(
-        "📝 Шаг 5/5\n\nХотите указать модели, которые уже рассматриваете?",
+        f"{get_progress_bar(5)} {get_step_text(5)}\n\n"
+        "📝 Хотите указать модели, которые уже рассматриваете?",
         reply_markup=models_choice_keyboard()
     )
     await callback.answer()
-
-
-# ---------- АДМИН-КОМАНДЫ ----------
-@dp.message(Command("admin"))
-async def admin(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    users = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    requests_total = cursor.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
-    pending = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='pending'").fetchone()[0]
-    confirmed = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='confirmed'").fetchone()[0]
-
-    stats = cursor.execute(
-        "SELECT category, COUNT(*) FROM requests GROUP BY category"
-    ).fetchall()
-
-    text = f"📊 NoFuss Guide Analytics\n\n"
-    text += f"👥 Пользователей: {users}\n"
-    text += f"📨 Всего заявок: {requests_total}\n"
-    text += f"⏳ В обработке: {pending}\n"
-    text += f"✅ Подтверждено: {confirmed}\n\n"
-    text += f"📂 По категориям:\n"
-
-    for category, count in stats:
-        text += f"  • {category}: {count}\n"
-
-    await message.answer(text)
-
-
-@dp.message(Command("export"))
-async def export_data(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    rows = cursor.execute(
-        """SELECT 
-            request_number,
-            created_at, 
-            category, 
-            budget, 
-            priority, 
-            used, 
-            models, 
-            contact, 
-            status,
-            confirmed_at 
-        FROM requests 
-        ORDER BY created_at DESC"""
-    ).fetchall()
-
-    filename = f"nofuss_export_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
-
-    with open(filename, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "№ заявки",
-            "Дата", 
-            "Категория", 
-            "Бюджет", 
-            "Приоритет", 
-            "Б/У", 
-            "Модели", 
-            "Контакт",
-            "Статус",
-            "Дата подтверждения"
-        ])
-        writer.writerows(rows)
-
-    await message.answer_document(FSInputFile(filename))
-    
-    # Удаляем файл после отправки
-    os.remove(filename)
 
 
 # ---------- FALLBACK ----------
