@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
+UNSPLASH_ACCESS_KEY = "kPtZY-3eUqZh3Epo9iBbGufCXwyAPUyrZsR29B8j218"
 
 # ---------- БАЗА ДАННЫХ ----------
 db = sqlite3.connect("nofuss.db", check_same_thread=False)
@@ -67,23 +68,58 @@ def contact_keyboard():
         [KeyboardButton("📞 Поделиться контактом", request_contact=True)]
     ], resize_keyboard=True, one_time_keyboard=True)
 
-# ---------- НОВОСТИ ----------
+# ---------- НОВОСТИ (35+ ИСТОЧНИКОВ) ----------
 TECH_RSS_FEEDS = {
     "The Verge": "https://www.theverge.com/rss/index.xml",
     "TechCrunch": "https://techcrunch.com/feed/",
     "Wired": "https://www.wired.com/feed/rss",
     "Engadget": "https://www.engadget.com/rss.xml",
-    "GSMArena": "https://www.gsmarena.com/rss-news-reviews.php3",
-    "Apple Newsroom": "https://www.apple.com/newsroom/rss-feed.rss",
-    "Google Blog": "https://blog.google/rss/",
-    "Xiaomi Blog": "https://blog.mi.com/en/feed/",
-    "Samsung Newsroom": "https://news.samsung.com/global/feed",
+    "Ars Technica": "https://feeds.arstechnica.com/arstechnica/index",
+    "CNET": "https://www.cnet.com/rss/news/",
     "Tom's Hardware": "https://www.tomshardware.com/feeds/all",
+    "XDA Developers": "https://www.xda-developers.com/feed/",
+    "Android Authority": "https://www.androidauthority.com/feed/",
+    "GSMArena": "https://www.gsmarena.com/rss-news-reviews.php3",
+    "Notebookcheck": "https://www.notebookcheck.net/feed/",
+    "Digital Trends": "https://www.digitaltrends.com/feed/",
+    "Pocket-lint": "https://www.pocket-lint.com/rss",
+    "Android Central": "https://www.androidcentral.com/feeds/all",
+    "iMore": "https://www.imore.com/rss.xml",
+    "9to5Mac": "https://9to5mac.com/feed/",
+    "9to5Google": "https://9to5google.com/feed/",
+    "Windows Central": "https://www.windowscentral.com/feeds/all",
+    "TechRadar": "https://www.techradar.com/rss",
+    "ZDNet": "https://www.zdnet.com/news/rss.xml",
+    "PCWorld": "https://www.pcworld.com/feed/",
+    "MacRumors": "https://www.macrumors.com/feed/",
+    "Android Police": "https://www.androidpolice.com/feed/",
+    "SamMobile": "https://www.sammobile.com/feed/",
+    "Xiaomi Today": "https://xiaomitoday.com/feed/",
+    "Huawei Central": "https://www.huaweicentral.com/feed/",
+    
+    # Официальные блоги
+    "Google Blog": "https://blog.google/rss/",
+    "Apple Newsroom": "https://www.apple.com/newsroom/rss-feed.rss",
+    "Microsoft Blog": "https://blogs.microsoft.com/feed/",
+    "NVIDIA Blog": "https://blogs.nvidia.com/feed/",
+    "Xiaomi Blog": "https://blog.mi.com/en/feed/",
+    "Honor Blog": "https://www.honor.com/global/feed/",
+    "Huawei Blog": "https://consumer.huawei.com/en/community/feed/",
+    "Samsung Newsroom": "https://news.samsung.com/global/feed",
+    "OnePlus Blog": "https://www.oneplus.com/feed",
+    "Oppo Blog": "https://www.oppo.com/en/feed/",
+    "Vivo Blog": "https://www.vivo.com/en/feed/",
+    "Sony Blog": "https://www.sony.com/en/feed/",
+    "Lenovo Blog": "https://blog.lenovo.com/feed/",
+    "ASUS Blog": "https://www.asus.com/feed/",
+    "Dell Blog": "https://www.dell.com/feed/",
+    "HP Blog": "https://www.hp.com/us-en/feed/",
 }
 
 # Хранилище для сгенерированных постов
 pending_posts = {}
 
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 def clean_html(text):
     if not text:
         return ""
@@ -96,19 +132,15 @@ def clean_text(text):
         return ""
     text = re.sub(r'\s+', ' ', text)
     text = text.replace('\n', ' ').replace('\r', ' ')
-    if len(text) > 400:
-        text = text[:400] + '...'
+    if len(text) > 500:
+        text = text[:500] + '...'
     return text.strip()
 
 def translate_text(text):
-    """Переводит текст на русский язык"""
     if not text or len(text) < 3:
         return text
-    
-    # Если уже есть русские буквы — не переводим
     if re.search(r'[а-яА-Я]', text):
         return text
-    
     try:
         translator = GoogleTranslator(source='en', target='ru')
         translated = translator.translate(text)
@@ -116,6 +148,36 @@ def translate_text(text):
     except Exception as e:
         logger.warning(f"Translation error: {e}")
         return text
+
+def get_news_image(query):
+    """Получает изображение по запросу через Unsplash API"""
+    if not UNSPLASH_ACCESS_KEY:
+        return None
+    
+    try:
+        # Очищаем запрос
+        keywords = query.replace('"', '').replace("'", '').split()[:3]
+        search_query = '+'.join(keywords)
+        
+        url = f"https://api.unsplash.com/search/photos"
+        params = {
+            'query': search_query,
+            'per_page': 1,
+            'orientation': 'landscape',
+            'client_id': UNSPLASH_ACCESS_KEY
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        if data.get('results'):
+            image_url = data['results'][0]['urls']['regular']
+            return image_url
+        return None
+    except Exception as e:
+        logger.warning(f"Image fetch error: {e}")
+        return None
 
 def parse_rss(url):
     try:
@@ -159,7 +221,7 @@ def parse_rss(url):
         return []
 
 def generate_post(article, index, total, source_name):
-    """Генерирует красивый пост для одной новости с переводом"""
+    """Генерирует красивый пост для одной новости"""
     title = article.get('title', '')
     description = article.get('description', '')
     link = article.get('link', '')
@@ -168,24 +230,24 @@ def generate_post(article, index, total, source_name):
     title_ru = translate_text(title)
     desc_ru = translate_text(description) if description else ''
     
-    # Выбираем эмодзи
-    emojis = ["📱", "💻", "📺", "⌚", "🎮", "🚀", "💡", "🔥", "📰", "⚡"]
-    emoji = random.choice(emojis)
+    # Ищем изображение
+    image_url = get_news_image(title_ru)
     
     # Формируем пост
-    post = f"{emoji} **Новость {index + 1} из {total}**\n\n"
-    post += f"**{title_ru}**\n\n"
+    post = f"🔹 **{title_ru}**\n\n"
     
     if desc_ru:
         post += f"{desc_ru}\n\n"
     
-    post += f"🔗 [Читать подробнее]({link})\n\n"
+    post += f"🔗 [Подробнее]({link})\n\n"
     post += f"📌 {source_name}\n"
-    post += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-    post += "➡️ **Подписывайтесь на канал:** @NoFussGuide\n\n"
-    post += "#новости #технологии #обзор"
+    post += f"📅 {datetime.now().strftime('%d.%m.%Y')}\n\n"
+    post += "— *NoFuss Guide*"
     
-    return post
+    return {
+        'text': post,
+        'image': image_url
+    }
 
 # ---------- ОБРАБОТЧИКИ ЗАЯВОК ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -279,7 +341,7 @@ async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Только для админа")
         return
     
-    status_msg = await update.message.reply_text("🔍 Собираю свежие новости... Это может занять 20-30 секунд.")
+    status_msg = await update.message.reply_text("🔍 Собираю свежие новости... Это может занять 30-40 секунд.")
     
     all_news = []
     for source_name, url in TECH_RSS_FEEDS.items():
@@ -297,17 +359,18 @@ async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text("❌ Новостей не найдено. Попробуйте позже.")
         return
     
-    # Перемешиваем и берем топ-5
+    # Перемешиваем и берем топ-7
     random.shuffle(all_news)
-    selected_news = all_news[:5]
+    selected_news = all_news[:7]
     
-    # Генерируем посты для каждой новости
+    # Генерируем посты
     posts = []
     for i, article in enumerate(selected_news):
-        post_content = generate_post(article, i, len(selected_news), article['source'])
+        post_data = generate_post(article, i, len(selected_news), article['source'])
         posts.append({
             'type': 'news',
-            'content': post_content,
+            'text': post_data['text'],
+            'image': post_data['image'],
             'title': f"Новость {i+1}",
             'article': article
         })
@@ -320,7 +383,7 @@ async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'all_news': selected_news
     }
     
-    await status_msg.edit_text(f"✅ Найдено {len(selected_news)} новостей! Отправляю посты с переводом на русский...")
+    await status_msg.edit_text(f"✅ Найдено {len(selected_news)} новостей! Отправляю посты...")
     
     # Отправляем первый пост
     await send_post_to_admin(update, context, 0)
@@ -338,7 +401,7 @@ async def send_post_to_admin(update, context, index):
     total = len(posts)
     
     text = f"📝 **Пост {index + 1} из {total}**\n\n"
-    text += post['content']
+    text += post['text']
     
     keyboard = InlineKeyboardMarkup([
         [
@@ -355,12 +418,21 @@ async def send_post_to_admin(update, context, index):
         ]
     ])
     
-    await update.message.reply_text(
-        text,
-        parse_mode="Markdown",
-        disable_web_page_preview=True,
-        reply_markup=keyboard
-    )
+    # Если есть изображение — отправляем с фото
+    if post.get('image'):
+        await update.message.reply_photo(
+            photo=post['image'],
+            caption=text,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+            reply_markup=keyboard
+        )
 
 # ---------- КОЛБЭКИ ДЛЯ ПОСТОВ ----------
 async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -373,7 +445,9 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     current_index = data.get('current_index', 0)
     
     if not posts:
-        await query.edit_message_text("❌ Посты не найдены")
+        await query.edit_message_caption(
+            caption="❌ Посты не найдены"
+        )
         return
     
     action = query.data
@@ -384,36 +458,47 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         
         channel_id = os.getenv("CHANNEL_ID")
         if not channel_id:
-            await query.edit_message_text(
-                "❌ Не указан ID канала. Добавьте CHANNEL_ID в переменные окружения"
+            await query.edit_message_caption(
+                caption=f"{query.message.caption}\n\n❌ Не указан ID канала. Добавьте CHANNEL_ID в переменные окружения"
             )
             return
         
         try:
-            await query.get_bot().send_message(
-                channel_id,
-                post['content'],
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-            await query.edit_message_text(
-                f"{query.message.text}\n\n✅ **Пост опубликован в канале!** 🎉",
+            if post.get('image'):
+                await query.get_bot().send_photo(
+                    chat_id=channel_id,
+                    photo=post['image'],
+                    caption=post['text'],
+                    parse_mode="Markdown"
+                )
+            else:
+                await query.get_bot().send_message(
+                    chat_id=channel_id,
+                    text=post['text'],
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True
+                )
+            await query.edit_message_caption(
+                caption=f"{query.message.caption}\n\n✅ **Пост опубликован в канале!** 🎉",
                 parse_mode="Markdown"
             )
         except Exception as e:
-            await query.edit_message_text(f"❌ Ошибка публикации: {e}")
+            await query.edit_message_caption(
+                caption=f"{query.message.caption}\n\n❌ Ошибка публикации: {e}"
+            )
     
     elif action.startswith('edit_'):
         index = int(action.split('_')[1])
         context.user_data['editing_index'] = index
         
-        await query.edit_message_text(
-            f"✏️ **Редактирование поста {index + 1}**\n\n"
-            "Отправьте новый текст поста (Markdown поддерживается):\n\n"
-            "Пример форматирования:\n"
-            "**Жирный текст**\n"
-            "*Курсив*\n"
-            "[Ссылка](url)"
+        await query.edit_message_caption(
+            caption=f"✏️ **Редактирование поста {index + 1}**\n\n"
+                    "Отправьте новый текст поста (Markdown поддерживается):\n\n"
+                    "Пример:\n"
+                    "**Заголовок**\n"
+                    "Текст новости...\n\n"
+                    "🔗 [Подробнее](url)\n\n"
+                    "— *NoFuss Guide*"
         )
         return
     
@@ -434,7 +519,9 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await send_post_to_admin_by_query(query, current_index)
     
     elif action == 'refresh_news':
-        await query.edit_message_text("🔄 Обновляю новости...")
+        await query.edit_message_caption(
+            caption="🔄 Обновляю новости..."
+        )
         new_update = Update(
             update_id=update.update_id,
             message=query.message
@@ -442,7 +529,9 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await news_now(new_update, context)
     
     elif action == 'close_news':
-        await query.edit_message_text("❌ Закрыто")
+        await query.edit_message_caption(
+            caption="❌ Закрыто"
+        )
         pending_posts.pop(user_id, None)
 
 async def send_post_to_admin_by_query(query, index):
@@ -458,7 +547,7 @@ async def send_post_to_admin_by_query(query, index):
     total = len(posts)
     
     text = f"📝 **Пост {index + 1} из {total}**\n\n"
-    text += post['content']
+    text += post['text']
     
     keyboard = InlineKeyboardMarkup([
         [
@@ -475,12 +564,20 @@ async def send_post_to_admin_by_query(query, index):
         ]
     ])
     
-    await query.message.reply_text(
-        text,
-        parse_mode="Markdown",
-        disable_web_page_preview=True,
-        reply_markup=keyboard
-    )
+    if post.get('image'):
+        await query.message.reply_photo(
+            photo=post['image'],
+            caption=text,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+    else:
+        await query.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+            reply_markup=keyboard
+        )
 
 async def handle_edit_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -492,7 +589,7 @@ async def handle_edit_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Пост не найден")
         return
     
-    posts[editing_index]['content'] = update.message.text
+    posts[editing_index]['text'] = update.message.text
     pending_posts[user_id] = data
     
     await update.message.reply_text("✅ Пост обновлён!")
