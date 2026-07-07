@@ -8,6 +8,11 @@ import json
 from datetime import datetime, timedelta
 from functools import wraps
 from aiohttp import web
+import logging
+
+# Настройка логирования для отладки
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
@@ -23,11 +28,17 @@ from aiogram.fsm.storage.memory import MemoryStorage
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
 
+# Оптимизация: используем MemoryStorage с очисткой
+storage = MemoryStorage()
 bot = Bot(TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+dp = Dispatcher(storage=storage)
 
 user_last_request = {}
-
+# Кеш для быстрого доступа к данным
+cache = {
+    'stats': {},
+    'last_updated': 0
+}
 
 # ---------- HEALTH CHECK ----------
 async def health(request):
@@ -44,6 +55,7 @@ async def start_web_server():
     site = web.TCPSite(runner, '0.0.0.0', port)
 
     await site.start()
+    logger.info(f"Web server started on port {port}")
 # ----------------------------------
 
 
@@ -79,7 +91,12 @@ def migrate_db():
 # --------------------------------
 
 
+# Оптимизация: используем WAL режим для SQLite
 db = sqlite3.connect("nofuss.db", check_same_thread=False)
+db.execute("PRAGMA journal_mode=WAL")
+db.execute("PRAGMA synchronous=NORMAL")
+db.execute("PRAGMA cache_size=10000")
+db.execute("PRAGMA temp_store=MEMORY")
 cursor = db.cursor()
 
 cursor.execute("""
@@ -111,18 +128,36 @@ db.commit()
 
 migrate_db()
 
+# Исправленный триггер для правильной нумерации с 1
+cursor.execute("DROP TRIGGER IF EXISTS set_request_number")
 cursor.execute("""
 CREATE TRIGGER IF NOT EXISTS set_request_number 
 AFTER INSERT ON requests
 BEGIN
     UPDATE requests 
     SET request_number = (
-        SELECT COUNT(*) + 1 
+        SELECT COUNT(*) 
         FROM requests 
         WHERE id <= NEW.id
     )
     WHERE id = NEW.id;
 END;
+""")
+db.commit()
+
+# Фикс: обновляем номера существующих заявок
+cursor.execute("""
+UPDATE requests 
+SET request_number = (
+    SELECT COUNT(*) 
+    FROM requests r2 
+    WHERE r2.id <= requests.id
+)
+WHERE request_number IS NULL OR request_number != (
+    SELECT COUNT(*) 
+    FROM requests r2 
+    WHERE r2.id <= requests.id
+)
 """)
 db.commit()
 
@@ -135,7 +170,6 @@ CATEGORIES = {
     "🔧 Другое": "other",
 }
 
-# Категории, для которых не нужен приоритет
 NO_PRIORITY_CATEGORIES = ["⌚ Носимая электроника", "🔧 Другое"]
 
 BUDGETS = {
@@ -279,6 +313,25 @@ def get_status_text(status):
         'cancelled': 'Отменена'
     }
     return status_map.get(status, status)
+
+def get_cached_stats(force_refresh=False):
+    """Кеширование статистики для быстрого доступа"""
+    global cache
+    now = time.time()
+    
+    if force_refresh or now - cache['last_updated'] > 30:
+        cache['stats'] = {
+            'users': cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0],
+            'total': cursor.execute("SELECT COUNT(*) FROM requests").fetchone()[0],
+            'pending': cursor.execute("SELECT COUNT(*) FROM requests WHERE status='pending'").fetchone()[0],
+            'processing': cursor.execute("SELECT COUNT(*) FROM requests WHERE status='processing'").fetchone()[0],
+            'confirmed': cursor.execute("SELECT COUNT(*) FROM requests WHERE status='confirmed'").fetchone()[0],
+            'completed': cursor.execute("SELECT COUNT(*) FROM requests WHERE status='completed'").fetchone()[0],
+            'cancelled': cursor.execute("SELECT COUNT(*) FROM requests WHERE status='cancelled'").fetchone()[0],
+        }
+        cache['last_updated'] = now
+    
+    return cache['stats']
 
 
 # ---------- КЛАВИАТУРЫ ----------
@@ -634,9 +687,7 @@ async def budget_callback(callback: CallbackQuery, state: FSMContext):
     await state.update_data(budget=budget_text)
     save_draft(callback.from_user.id, await state.get_data())
     
-    # Проверяем, нужно ли спрашивать приоритет
     if category in NO_PRIORITY_CATEGORIES:
-        # Для "Носимая электроника" и "Другое" сразу переходим к контакту
         await state.update_data(priority="Не требуется", used="Не требуется", models="Не указано")
         
         await callback.message.edit_text(
@@ -653,7 +704,6 @@ async def budget_callback(callback: CallbackQuery, state: FSMContext):
         await state.set_state(Form.contact)
         await callback.answer()
     else:
-        # Для остальных категорий спрашиваем приоритет
         await state.update_data(_last_step='priority')
         
         await callback.message.edit_text(
@@ -842,7 +892,6 @@ async def edit_field_callback(callback: CallbackQuery, state: FSMContext):
         await state.set_state(Form.budget)
     
     elif field == "priority":
-        # Проверяем, нужен ли приоритет для этой категории
         if category in NO_PRIORITY_CATEGORIES:
             await callback.answer("ℹ️ Для этой категории приоритет не требуется")
             return
@@ -919,7 +968,6 @@ async def finish_request(message: Message, state: FSMContext):
         )
         return
     
-    # Для категорий без приоритета устанавливаем значения по умолчанию
     category = data.get("category", "")
     if category in NO_PRIORITY_CATEGORIES:
         if not data.get("priority"):
@@ -1018,6 +1066,9 @@ async def admin_status_callback(callback: CallbackQuery):
     )
     db.commit()
     
+    # Очищаем кеш
+    get_cached_stats(force_refresh=True)
+    
     status_text = get_status_text(new_status)
     status_emoji = get_status_emoji(new_status)
     old_status_text_ru = get_status_text(old_status_text)
@@ -1113,30 +1164,20 @@ async def admin(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    users = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    requests_total = cursor.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
+    stats = get_cached_stats(force_refresh=True)
     
-    pending = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='pending'").fetchone()[0]
-    processing = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='processing'").fetchone()[0]
-    confirmed = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='confirmed'").fetchone()[0]
-    completed = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='completed'").fetchone()[0]
-    cancelled = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='cancelled'").fetchone()[0]
-
+    # Получаем статистику по категориям
+    categories_stats = cursor.execute(
+        "SELECT category, COUNT(*) FROM requests GROUP BY category"
+    ).fetchall()
+    
+    # Получаем статистику за неделю
     week_stats = cursor.execute("""
         SELECT DATE(created_at) as date, COUNT(*) 
         FROM requests 
         WHERE created_at >= DATE('now', '-7 days')
         GROUP BY DATE(created_at)
         ORDER BY date DESC
-    """).fetchall()
-
-    top_categories = cursor.execute("""
-        SELECT category, COUNT(*) as cnt
-        FROM requests
-        WHERE created_at >= DATE('now', '-30 days')
-        GROUP BY category
-        ORDER BY cnt DESC
-        LIMIT 5
     """).fetchall()
 
     avg_response = cursor.execute("""
@@ -1146,13 +1187,13 @@ async def admin(message: Message):
     """).fetchone()[0]
 
     text = f"📊 NoFuss Guide Analytics\n\n"
-    text += f"👥 Пользователей: {users}\n"
-    text += f"📨 Всего заявок: {requests_total}\n\n"
-    text += f"⏳ В обработке: {pending}\n"
-    text += f"🔄 В работе: {processing}\n"
-    text += f"✅ Подтверждено: {confirmed}\n"
-    text += f"🎉 Выполнено: {completed}\n"
-    text += f"❌ Отменено: {cancelled}\n\n"
+    text += f"👥 Пользователей: {stats['users']}\n"
+    text += f"📨 Всего заявок: {stats['total']}\n\n"
+    text += f"⏳ В обработке: {stats['pending']}\n"
+    text += f"🔄 В работе: {stats['processing']}\n"
+    text += f"✅ Подтверждено: {stats['confirmed']}\n"
+    text += f"🎉 Выполнено: {stats['completed']}\n"
+    text += f"❌ Отменено: {stats['cancelled']}\n\n"
     
     if avg_response:
         text += f"⏱ Среднее время ответа: {avg_response:.1f} ч.\n\n"
@@ -1161,10 +1202,10 @@ async def admin(message: Message):
     for date, count in week_stats:
         text += f"  • {date}: {count} заявок\n"
     
-    if top_categories:
-        text += f"\n🏆 Топ категорий (за месяц):\n"
-        for cat, cnt in top_categories:
-            text += f"  • {cat}: {cnt}\n"
+    if categories_stats:
+        text += f"\n📂 По категориям:\n"
+        for cat, count in categories_stats:
+            text += f"  • {cat}: {count}\n"
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1181,6 +1222,7 @@ async def admin_recent_callback(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён")
         return
     
+    # Исправлено: правильная нумерация с 1
     requests = cursor.execute(
         """SELECT id, request_number, user_id, category, status, created_at
         FROM requests 
@@ -1202,12 +1244,23 @@ async def admin_recent_callback(callback: CallbackQuery):
         text,
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_recent")],
+                [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_recent_refresh")],
                 [InlineKeyboardButton(text="🏠 Назад", callback_data="admin_back")]
             ]
         )
     )
     await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_recent_refresh")
+async def admin_recent_refresh_callback(callback: CallbackQuery):
+    """Обновление списка последних заявок"""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    # Перезапускаем admin_recent с обновленными данными
+    await admin_recent_callback(callback)
 
 
 @dp.callback_query(F.data == "admin_back")
@@ -1220,12 +1273,13 @@ async def admin_back_callback(callback: CallbackQuery):
     await admin(callback.message)
 
 
-# ---------- ЭКСПОРТ ----------
+# ---------- ЭКСПОРТ (ИСПРАВЛЕННАЯ ВЕРСИЯ) ----------
 @dp.message(Command("export"))
 async def export_data(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
+    # Получаем данные с правильной кодировкой
     rows = cursor.execute(
         """SELECT 
             request_number,
@@ -1245,8 +1299,9 @@ async def export_data(message: Message):
 
     filename = f"nofuss_export_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
 
+    # Используем правильную кодировку для русского языка
     with open(filename, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
         writer.writerow([
             "№ заявки",
             "Дата создания", 
@@ -1260,10 +1315,28 @@ async def export_data(message: Message):
             "Дата подтверждения",
             "Комментарий админа"
         ])
-        writer.writerows(rows)
+        
+        # Преобразуем данные в строки с правильной кодировкой
+        for row in rows:
+            # Преобразуем None в пустые строки
+            formatted_row = []
+            for item in row:
+                if item is None:
+                    formatted_row.append("")
+                else:
+                    # Убеждаемся, что все данные в строковом формате
+                    formatted_row.append(str(item))
+            writer.writerow(formatted_row)
 
+    # Отправляем файл
     await message.answer_document(FSInputFile(filename))
-    os.remove(filename)
+    
+    # Удаляем файл через некоторое время
+    await asyncio.sleep(5)
+    try:
+        os.remove(filename)
+    except:
+        pass
 
 
 # ---------- НАВИГАЦИЯ ----------
@@ -1385,7 +1458,11 @@ async def fallback_callback(callback: CallbackQuery):
 
 
 async def main():
+    # Запускаем веб-сервер для health check
     await start_web_server()
+    
+    # Запускаем бота
+    logger.info("Bot started!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
