@@ -328,9 +328,9 @@ async def contact_direct(message: Message):
     await message.answer("💬 Написать напрямую: @goojifeed")
 
 
-# ---------- FALLBACK (БЕЗ STATE!) ----------
+# ---------- ОБРАБОТЧИК ВСЕХ ОСТАЛЬНЫХ СООБЩЕНИЙ ----------
 @dp.message()
-async def fallback(message: Message):
+async def handle_all_messages(message: Message):
     await message.answer(
         "Используйте кнопки меню 👇",
         reply_markup=main_menu()
