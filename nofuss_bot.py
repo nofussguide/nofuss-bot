@@ -2080,7 +2080,7 @@ async def scheduled_news_check():
 
 # ---------- FALLBACK ----------
 @dp.message()
-async def fallback(message: Message):
+async def fallback(message: Message, state: FSMContext):
     current_state = await state.get_state()
     
     if current_state and current_state != "Form:admin_chat":
