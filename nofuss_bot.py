@@ -95,7 +95,7 @@ CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING
 # ---------- МУЛЬТИЯЗЫЧНОСТЬ ----------
 TRANSLATIONS = {
     'ru': {
-        'welcome': "👋 Добро пожаловать в NoFuss Guide!\n\n🔍 Бот помогает собрать все требования к технике, а конкретный подбор уже производит специалист, которому можно будет написать лично для уточнения деталей.",
+        'welcome': "👋 Добро пожаловать в NoFuss Guide!\n\n🔍 Бот автоматически собирает все требования, а итоговый подбор выполняет специалист.\n\n📋 Напишите /commands чтобы увидеть все доступные команды.",
         'choose_category': "📱 Выберите категорию техники:",
         'choose_budget': "💰 Выберите бюджет:",
         'choose_priority': "🎯 Что для вас наиболее важно?",
@@ -123,7 +123,7 @@ TRANSLATIONS = {
         'wait_spam': "⏳ Пожалуйста, подождите {seconds} секунд перед отправкой новой заявки."
     },
     'en': {
-        'welcome': "👋 Welcome to NoFuss Guide!\n\n🔍 The bot helps collect all your tech requirements, and a specialist will handle the detailed selection.",
+        'welcome': "👋 Welcome to NoFuss Guide!\n\n🔍 The bot automatically collects all requirements, and a specialist performs the final selection.\n\n📋 Type /commands to see all available commands.",
         'choose_category': "📱 Choose a category:",
         'choose_budget': "💰 Choose your budget:",
         'choose_priority': "🎯 What matters most to you?",
@@ -151,7 +151,7 @@ TRANSLATIONS = {
         'wait_spam': "⏳ Please wait {seconds} seconds before sending a new request."
     },
     'kk': {
-        'welcome': "👋 NoFuss Guide-ге қош келдіңіз!\n\n🔍 Бот техникаға қойылатын барлық талаптарды жинауға көмектеседі, ал нақты таңдауды маман жасайды.",
+        'welcome': "👋 NoFuss Guide-ге қош келдіңіз!\n\n🔍 Бот барлық талаптарды автоматты түрде жинайды, ал нақты таңдауды маман жасайды.\n\n📋 Барлық қолжетімді командаларды көру үшін /commands жазыңыз.",
         'choose_category': "📱 Техника санатын таңдаңыз:",
         'choose_budget': "💰 Бюджетіңізді таңдаңыз:",
         'choose_priority': "🎯 Сіз үшін ең маңыздысы не?",
@@ -396,7 +396,6 @@ def theme_select_inline():
     return InlineKeyboardMarkup(buttons)
 
 def feedback_inline(request_id):
-    """Клавиатура для оценки отзыва"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⭐ 1", callback_data=f"feedback_rating_{request_id}_1")],
         [InlineKeyboardButton("⭐⭐ 2", callback_data=f"feedback_rating_{request_id}_2")],
@@ -596,7 +595,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
-        f"📋 Доступные команды: /commands\n\n"
         f"📱 {get_text(user_id, 'choose_category')}",
         parse_mode="Markdown",
         reply_markup=remove_keyboard()
@@ -1139,7 +1137,6 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     
     elif parts[2] == "text":
-        # Просим пользователя написать текстовый отзыв
         await query.edit_message_text(
             "✏️ Напишите ваш отзыв текстом:\n\n"
             "Что вам понравилось? Что можно улучшить? Будем рады вашим комментариям!"
@@ -1216,44 +1213,18 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
     
     user_id, request_number = request_data
     
-    # Проверяем, не был ли уже статус "completed"
-    if new_status == "completed":
-        check_feedback = cursor.execute(
-            "SELECT id FROM feedback WHERE request_id = ?", (request_id,)
-        ).fetchone()
-        if check_feedback:
-            await query.answer("ℹ️ Отзыв на эту заявку уже оставлен")
-    
     cursor.execute("UPDATE requests SET status = ?, confirmed_at = CURRENT_TIMESTAMP WHERE id = ?", (new_status, request_id))
     db.commit()
     
     status_text = status_map.get(new_status, new_status)
     await query.get_bot().send_message(user_id, f"📢 Статус вашей заявки обновлён!\n\nНовый статус: {status_text}\n\nПо вопросам: @goojifeed")
     
-    # Если статус "Выполнена" и отзыва ещё нет — запрашиваем
     if new_status == "completed":
-        check_feedback = cursor.execute(
-            "SELECT id FROM feedback WHERE request_id = ?", (request_id,)
-        ).fetchone()
-        if not check_feedback:
-            await request_feedback(request_id, user_id)
+        await request_feedback(request_id, user_id)
     
     await query.edit_message_text(f"{query.message.text}\n\n✅ Статус обновлён: {status_text}")
 
 # ---------- КОМАНДЫ ----------
-async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "ℹ️ **О проекте NoFuss Guide**\n\n"
-        "🤖 Бот помогает собрать все требования к технике, "
-        "а конкретный подбор производит специалист.\n\n"
-        "📅 Версия: 2.0\n"
-        "📧 Контакты: @goojifeed\n"
-        "📢 Канал: @NoFussGuide\n\n"
-        "Спасибо, что пользуетесь нашим сервисом! 🙏",
-        parse_mode="Markdown",
-        reply_markup=remove_keyboard()
-    )
-
 async def commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📋 **Список команд**\n\n"
@@ -1264,6 +1235,18 @@ async def commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/about - О проекте\n"
         "/commands - Список команд\n"
         "/cancel - Отменить действие",
+        parse_mode="Markdown",
+        reply_markup=remove_keyboard()
+    )
+
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "ℹ️ **О проекте NoFuss Guide**\n\n"
+        "🤖 Бот автоматически собирает все требования, а итоговый подбор выполняет специалист.\n\n"
+        "📅 Версия: 2.0\n"
+        "📧 Контакты: @goojifeed\n"
+        "📢 Канал: @NoFussGuide\n\n"
+        "Спасибо, что пользуетесь нашим сервисом! 🙏",
         parse_mode="Markdown",
         reply_markup=remove_keyboard()
     )
@@ -1296,7 +1279,8 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- НОВОСТИ (АДМИН) ----------
 async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
-        return  # Просто игнорируем, ничего не отвечаем
+        await update.message.reply_text("⛔ Только для админа")
+        return
     
     status_msg = await update.message.reply_text("🔍 Собираю свежие новости... Это может занять 30-40 секунд.")
     
