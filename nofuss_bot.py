@@ -90,7 +90,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
 # ---------- СОСТОЯНИЯ ----------
-CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING_POST, AFTER_SUBMIT, FEEDBACK = range(11)
+CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING_POST, AFTER_SUBMIT, FEEDBACK, FEEDBACK_TEXT = range(12)
 
 # ---------- МУЛЬТИЯЗЫЧНОСТЬ ----------
 TRANSLATIONS = {
@@ -233,52 +233,6 @@ def update_user_theme(user_id, theme):
     if user_id in user_cache:
         user_cache[user_id]['theme'] = theme
 
-# ---------- ПОПУЛЯРНЫЕ МОДЕЛИ ----------
-POPULAR_MODELS = {
-    "📱 Смартфоны": [
-        "📱 iPhone 15 Pro Max",
-        "📱 Samsung Galaxy S24 Ultra",
-        "📱 Xiaomi 14 Pro",
-        "📱 Google Pixel 8 Pro",
-        "📱 OnePlus 12"
-    ],
-    "💻 Ноутбуки": [
-        "💻 MacBook Pro 16\"",
-        "💻 Dell XPS 15",
-        "💻 Lenovo ThinkPad X1",
-        "💻 Asus ROG Zephyrus",
-        "💻 HP Spectre x360"
-    ],
-    "📺 Телевизоры": [
-        "📺 Samsung QLED 4K",
-        "📺 LG OLED C3",
-        "📺 Sony Bravia XR",
-        "📺 TCL Mini-LED",
-        "📺 Hisense ULED"
-    ],
-    "📲 Планшеты": [
-        "📲 iPad Pro 12.9\"",
-        "📲 Samsung Galaxy Tab S9",
-        "📲 Lenovo Tab P12",
-        "📲 Huawei MatePad Pro",
-        "📲 Microsoft Surface Pro"
-    ],
-    "⌚ Носимая электроника": [
-        "⌚ Apple Watch Ultra 2",
-        "⌚ Samsung Galaxy Watch 6",
-        "⌚ Garmin Fenix 7",
-        "⌚ Xiaomi Watch 2 Pro",
-        "⌚ Huawei Watch GT 4"
-    ],
-    "🔧 Другое": [
-        "🔧 Наушники Sony WH-1000XM5",
-        "🔧 Колонка JBL Charge 5",
-        "🔧 Монитор LG UltraFine",
-        "🔧 Роутер Asus RT-AX88U",
-        "🔧 Повербанк Anker 737"
-    ]
-}
-
 # ---------- ДАННЫЕ ДЛЯ КРИТЕРИЕВ ----------
 CATEGORIES = ["📱 Смартфоны", "💻 Ноутбуки", "📺 Телевизоры", "📲 Планшеты", "⌚ Носимая электроника", "🔧 Другое"]
 
@@ -327,10 +281,6 @@ def get_status_emoji(status):
 def get_status_text(status):
     status_map = {'pending': 'В обработке', 'processing': 'В работе', 'completed': 'Выполнена', 'cancelled': 'Отменена'}
     return status_map.get(status, status)
-
-def get_popular_models(category):
-    models = POPULAR_MODELS.get(category, [])
-    return "\n".join([f"  • {m}" for m in models])
 
 # ---------- ИНЛАЙН-КЛАВИАТУРЫ ----------
 def categories_inline(user_id):
@@ -446,12 +396,14 @@ def theme_select_inline():
     return InlineKeyboardMarkup(buttons)
 
 def feedback_inline(request_id):
+    """Клавиатура для оценки отзыва"""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ 1", callback_data=f"feedback_{request_id}_1")],
-        [InlineKeyboardButton("⭐⭐ 2", callback_data=f"feedback_{request_id}_2")],
-        [InlineKeyboardButton("⭐⭐⭐ 3", callback_data=f"feedback_{request_id}_3")],
-        [InlineKeyboardButton("⭐⭐⭐⭐ 4", callback_data=f"feedback_{request_id}_4")],
-        [InlineKeyboardButton("⭐⭐⭐⭐⭐ 5", callback_data=f"feedback_{request_id}_5")],
+        [InlineKeyboardButton("⭐ 1", callback_data=f"feedback_rating_{request_id}_1")],
+        [InlineKeyboardButton("⭐⭐ 2", callback_data=f"feedback_rating_{request_id}_2")],
+        [InlineKeyboardButton("⭐⭐⭐ 3", callback_data=f"feedback_rating_{request_id}_3")],
+        [InlineKeyboardButton("⭐⭐⭐⭐ 4", callback_data=f"feedback_rating_{request_id}_4")],
+        [InlineKeyboardButton("⭐⭐⭐⭐⭐ 5", callback_data=f"feedback_rating_{request_id}_5")],
+        [InlineKeyboardButton("✏️ Написать отзыв", callback_data=f"feedback_text_{request_id}")],
         [InlineKeyboardButton("❌ Пропустить", callback_data=f"feedback_skip_{request_id}")]
     ])
 
@@ -644,7 +596,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
-        f"🔥 *Популярные модели сейчас:*\n{get_popular_models('📱 Смартфоны')}\n\n"
+        f"📋 Доступные команды: /commands\n\n"
         f"📱 {get_text(user_id, 'choose_category')}",
         parse_mode="Markdown",
         reply_markup=remove_keyboard()
@@ -668,9 +620,7 @@ async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
         f"✅ Выбрано: {category}\n\n"
-        f"🔥 *Популярные модели в этой категории:*\n{get_popular_models(category)}\n\n"
         f"{get_text(user_id, 'choose_budget')}",
-        parse_mode="Markdown",
         reply_markup=budget_inline(category, user_id)
     )
     return BUDGET
@@ -1188,18 +1138,49 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Спасибо! Вы всегда можете оставить отзыв позже.")
         return ConversationHandler.END
     
-    rating = int(parts[2])
+    elif parts[2] == "text":
+        # Просим пользователя написать текстовый отзыв
+        await query.edit_message_text(
+            "✏️ Напишите ваш отзыв текстом:\n\n"
+            "Что вам понравилось? Что можно улучшить? Будем рады вашим комментариям!"
+        )
+        context.user_data['feedback_request_id'] = request_id
+        return FEEDBACK_TEXT
     
+    else:  # rating
+        rating = int(parts[2])
+        cursor.execute("""
+            INSERT INTO feedback(request_id, user_id, rating)
+            VALUES(?, ?, ?)
+        """, (request_id, user_id, rating))
+        db.commit()
+        
+        await query.edit_message_text(
+            f"{get_text(user_id, 'feedback_thanks')}\n\n"
+            f"⭐ Ваша оценка: {rating}\n"
+            "Мы учтём ваше мнение! 🙏",
+            parse_mode="Markdown"
+        )
+        return ConversationHandler.END
+
+async def handle_feedback_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    request_id = context.user_data.get('feedback_request_id')
+    
+    if not request_id:
+        await update.message.reply_text("❌ Ошибка, попробуйте позже.")
+        return ConversationHandler.END
+    
+    comment = update.message.text
     cursor.execute("""
-        INSERT INTO feedback(request_id, user_id, rating)
+        INSERT INTO feedback(request_id, user_id, comment)
         VALUES(?, ?, ?)
-    """, (request_id, user_id, rating))
+    """, (request_id, user_id, comment))
     db.commit()
     
-    await query.edit_message_text(
-        f"{get_text(user_id, 'feedback_thanks')}\n\n"
-        f"⭐ Ваша оценка: {rating}\n"
-        "Мы учтём ваше мнение! 🙏",
+    await update.message.reply_text(
+        "🙏 Спасибо за ваш отзыв!\n\n"
+        "Мы обязательно учтём ваши пожелания! 💙",
         parse_mode="Markdown"
     )
     return ConversationHandler.END
@@ -1209,7 +1190,7 @@ async def request_feedback(request_id, user_id):
     await bot.send_message(
         user_id,
         "🎉 Ваша заявка выполнена!\n\n"
-        "Пожалуйста, оцените нашу работу:",
+        "Пожалуйста, оцените нашу работу или оставьте текстовый отзыв:",
         reply_markup=feedback_inline(request_id)
     )
 
@@ -1235,14 +1216,27 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
     
     user_id, request_number = request_data
     
+    # Проверяем, не был ли уже статус "completed"
+    if new_status == "completed":
+        check_feedback = cursor.execute(
+            "SELECT id FROM feedback WHERE request_id = ?", (request_id,)
+        ).fetchone()
+        if check_feedback:
+            await query.answer("ℹ️ Отзыв на эту заявку уже оставлен")
+    
     cursor.execute("UPDATE requests SET status = ?, confirmed_at = CURRENT_TIMESTAMP WHERE id = ?", (new_status, request_id))
     db.commit()
     
     status_text = status_map.get(new_status, new_status)
     await query.get_bot().send_message(user_id, f"📢 Статус вашей заявки обновлён!\n\nНовый статус: {status_text}\n\nПо вопросам: @goojifeed")
     
+    # Если статус "Выполнена" и отзыва ещё нет — запрашиваем
     if new_status == "completed":
-        await request_feedback(request_id, user_id)
+        check_feedback = cursor.execute(
+            "SELECT id FROM feedback WHERE request_id = ?", (request_id,)
+        ).fetchone()
+        if not check_feedback:
+            await request_feedback(request_id, user_id)
     
     await query.edit_message_text(f"{query.message.text}\n\n✅ Статус обновлён: {status_text}")
 
@@ -1302,8 +1296,7 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- НОВОСТИ (АДМИН) ----------
 async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Только для админа")
-        return
+        return  # Просто игнорируем, ничего не отвечаем
     
     status_msg = await update.message.reply_text("🔍 Собираю свежие новости... Это может занять 30-40 секунд.")
     
@@ -1375,7 +1368,7 @@ async def send_post_to_admin(update, context, index):
     else:
         await update.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=keyboard)
 
-# ---------- КОЛБЭКИ НОВОСТЕЙ (ИСПРАВЛЕННЫЕ) ----------
+# ---------- КОЛБЭКИ НОВОСТЕЙ ----------
 async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1678,6 +1671,10 @@ async def main():
             ],
             FEEDBACK: [
                 CallbackQueryHandler(handle_feedback, pattern="^feedback_")
+            ],
+            FEEDBACK_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_feedback_text),
+                CommandHandler('cancel', cancel)
             ],
             EDITING_POST: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_post),
