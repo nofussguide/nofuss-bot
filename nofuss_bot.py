@@ -22,25 +22,15 @@ from aiogram.types import (
     CallbackQuery
 )
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext  # <-- ВАЖНО!
+from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart, Command
-from aiogram.types import (
-    Message, ReplyKeyboardMarkup, KeyboardButton,
-    InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile,
-    CallbackQuery
-)
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.storage.memory import MemoryStorage
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
@@ -191,15 +181,13 @@ def parse_rss_feed(url: str) -> List[Dict]:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
-        response = requests.get(url, timeout=15, headers=headers)
+        response = requests.get(url, timeout=10, headers=headers)
         response.raise_for_status()
         
         root = ET.fromstring(response.content)
         
-        # Пробуем RSS 2.0
         channel = root.find('channel')
         if channel is None:
-            # Пробуем Atom
             channel = root.find('{http://www.w3.org/2005/Atom}feed')
             if channel is None:
                 return []
@@ -210,12 +198,10 @@ def parse_rss_feed(url: str) -> List[Dict]:
             entries = channel.findall('{http://www.w3.org/2005/Atom}entry')
         
         for item in entries[:10]:
-            # Заголовок
             title = item.find('title')
             title_text = title.text if title is not None else 'Без заголовка'
             title_text = title_text.strip()
             
-            # Ссылка
             link = item.find('link')
             link_text = ''
             if link is not None:
@@ -224,19 +210,16 @@ def parse_rss_feed(url: str) -> List[Dict]:
                 link = item.find('{http://www.w3.org/2005/Atom}link')
                 link_text = link.get('href') if link is not None else ''
             
-            # Дата
             pub_date = item.find('pubDate')
             if pub_date is None:
                 pub_date = item.find('published')
             pub_date_text = pub_date.text if pub_date is not None else ''
             
-            # Описание
             description = item.find('description')
             if description is None:
                 description = item.find('summary')
             desc_text = description.text if description is not None else ''
             if desc_text:
-                # Убираем HTML-теги
                 desc_text = re.sub(r'<[^>]+>', ' ', desc_text)
                 desc_text = re.sub(r'\s+', ' ', desc_text).strip()
                 desc_text = desc_text[:500]
@@ -694,7 +677,6 @@ class NewsManager:
         self.pending_posts = {}
     
     async def fetch_all_news(self) -> List[Dict]:
-        """Парсит все RSS-ленты и собирает свежие новости"""
         all_articles = []
         sources_success = 0
         
@@ -2090,19 +2072,11 @@ async def scheduled_news_check():
 
 # ---------- FALLBACK ----------
 @dp.message()
-async def fallback(message: Message, state: FSMContext):
-    current_state = await state.get_state()
-    
-    if current_state and current_state != "Form:admin_chat":
-        await message.answer(
-            "⚠️ Пожалуйста, используйте кнопки для взаимодействия с ботом.",
-            reply_markup=main_menu_inline()
-        )
-    else:
-        await message.answer(
-            "Пожалуйста, используйте кнопки меню для взаимодействия с ботом 👇",
-            reply_markup=main_menu_inline()
-        )
+async def fallback(message: Message):
+    await message.answer(
+        "Пожалуйста, используйте кнопки меню для взаимодействия с ботом 👇",
+        reply_markup=main_menu_inline()
+    )
 
 
 @dp.callback_query()
