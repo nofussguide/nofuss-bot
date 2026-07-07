@@ -14,6 +14,7 @@ import logging
 from typing import List, Dict
 import html
 import random
+import textwrap
 
 # Для перевода
 from deep_translator import GoogleTranslator
@@ -96,8 +97,6 @@ TECH_RSS_FEEDS = {
     "SamMobile": "https://www.sammobile.com/feed/",
     "Xiaomi Today": "https://xiaomitoday.com/feed/",
     "Huawei Central": "https://www.huaweicentral.com/feed/",
-    
-    # Официальные блоги
     "Google Blog": "https://blog.google/rss/",
     "Apple Newsroom": "https://www.apple.com/newsroom/rss-feed.rss",
     "Microsoft Blog": "https://blogs.microsoft.com/feed/",
@@ -132,8 +131,6 @@ def clean_text(text):
         return ""
     text = re.sub(r'\s+', ' ', text)
     text = text.replace('\n', ' ').replace('\r', ' ')
-    if len(text) > 500:
-        text = text[:500] + '...'
     return text.strip()
 
 def translate_text(text):
@@ -150,15 +147,11 @@ def translate_text(text):
         return text
 
 def get_news_image(query):
-    """Получает изображение по запросу через Unsplash API"""
     if not UNSPLASH_ACCESS_KEY:
         return None
-    
     try:
-        # Очищаем запрос
         keywords = query.replace('"', '').replace("'", '').split()[:3]
         search_query = '+'.join(keywords)
-        
         url = f"https://api.unsplash.com/search/photos"
         params = {
             'query': search_query,
@@ -166,18 +159,31 @@ def get_news_image(query):
             'orientation': 'landscape',
             'client_id': UNSPLASH_ACCESS_KEY
         }
-        
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
-        
         data = response.json()
         if data.get('results'):
-            image_url = data['results'][0]['urls']['regular']
-            return image_url
+            return data['results'][0]['urls']['regular']
         return None
     except Exception as e:
         logger.warning(f"Image fetch error: {e}")
         return None
+
+def format_paragraph(text, width=60):
+    """Форматирует текст с выравниванием по ширине"""
+    if not text:
+        return ""
+    # Разбиваем на абзацы
+    paragraphs = text.split('\n')
+    formatted = []
+    for p in paragraphs:
+        if p.strip():
+            # Разбиваем на строки по ширине
+            lines = textwrap.wrap(p, width=width)
+            formatted.append('\n'.join(lines))
+        else:
+            formatted.append('')
+    return '\n\n'.join(formatted)
 
 def parse_rss(url):
     try:
@@ -230,19 +236,34 @@ def generate_post(article, index, total, source_name):
     title_ru = translate_text(title)
     desc_ru = translate_text(description) if description else ''
     
-    # Ищем изображение
-    image_url = get_news_image(title_ru)
+    # Генерируем рассуждение
+    reflections = [
+        "А как вы относитесь к таким изменениям? Делитесь мнением в комментариях! 💬",
+        "Что думаете по этому поводу? Расскажите нам! 🤔",
+        "Какие у вас ожидания от этого нововведения? Пишите! ✍️",
+        "Как вы считаете, это шаг вперёд или маркетинговый ход? 👇",
+        "Будете ли вы пользоваться этим? Нам интересно ваше мнение! 😊"
+    ]
+    reflection = random.choice(reflections)
     
-    # Формируем пост
-    post = f"🔹 **{title_ru}**\n\n"
+    # Форматируем текст с выравниванием
+    formatted_title = format_paragraph(title_ru, width=50)
+    formatted_desc = format_paragraph(desc_ru, width=50) if desc_ru else ''
     
-    if desc_ru:
-        post += f"{desc_ru}\n\n"
+    # Формируем пост с абзацами
+    post = f"🔹 **{formatted_title}**\n\n"
+    
+    if formatted_desc:
+        post += f"{formatted_desc}\n\n"
     
     post += f"🔗 [Подробнее]({link})\n\n"
     post += f"📌 {source_name}\n"
     post += f"📅 {datetime.now().strftime('%d.%m.%Y')}\n\n"
-    post += "— *NoFuss Guide*"
+    post += f"— *NoFuss Guide*\n\n"
+    post += f"💭 {reflection}"
+    
+    # Ищем изображение
+    image_url = get_news_image(title_ru)
     
     return {
         'text': post,
@@ -267,22 +288,36 @@ async def category(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return CATEGORY
     
     context.user_data['category'] = text
-    await update.message.reply_text("💰 Выберите бюджет:", reply_markup=main_menu())
+    await update.message.reply_text(
+        "💰 Введите ваш бюджет (например: 50000 руб, 700$ или просто цифру):",
+        reply_markup=main_menu()
+    )
     return BUDGET
 
 async def budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['budget'] = update.message.text
-    await update.message.reply_text("🎯 Что важно при выборе?", reply_markup=main_menu())
+    await update.message.reply_text(
+        "🎯 Что для вас важнее всего?\n"
+        "Напишите одним словом или предложением:\n"
+        "Например: производительность, камера, автономность, дизайн",
+        reply_markup=main_menu()
+    )
     return PRIORITY
 
 async def priority(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['priority'] = update.message.text
-    await update.message.reply_text("♻️ Рассматриваете б/у?", reply_markup=main_menu())
+    await update.message.reply_text(
+        "♻️ Рассматриваете б/у технику?\n"
+        "Ответьте Да / Нет / Не принципиально",
+        reply_markup=main_menu()
+    )
     return USED
 
 async def used(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['used'] = update.message.text
-    await update.message.reply_text("📝 Напишите модели (или пропустите):")
+    await update.message.reply_text(
+        "📝 Напишите модели, которые уже рассматриваете (или пропустите, отправив 'Нет'):"
+    )
     return MODELS
 
 async def models(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -295,15 +330,20 @@ async def models(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.contact:
-        await update.message.reply_text("Используйте кнопку '📞 Поделиться контактом'")
+        await update.message.reply_text(
+            "Используйте кнопку '📞 Поделиться контактом'",
+            reply_markup=contact_keyboard()
+        )
         return CONTACT
     
     data = context.user_data
+    user_id = update.message.from_user.id
+    
     cursor.execute("""
         INSERT INTO requests(user_id, category, budget, contact, priority, used, models)
         VALUES(?,?,?,?,?,?,?)
     """, (
-        update.message.from_user.id,
+        user_id,
         data.get('category'),
         data.get('budget'),
         update.message.contact.phone_number,
@@ -313,27 +353,156 @@ async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ))
     db.commit()
     
+    # Получаем ID заявки
+    request_id = cursor.lastrowid
+    
     await update.message.reply_text(
         "✅ Заявка принята!\n"
         "Спасибо за обращение! Я свяжусь с вами в ближайшее время.",
         reply_markup=main_menu()
     )
     
+    # Отправляем админу с кнопками управления
+    admin_text = (
+        f"🔥 **Новая заявка!**\n\n"
+        f"📋 № заявки: {request_id}\n"
+        f"👤 Пользователь: @{update.message.from_user.username or 'Нет юзернейма'}\n"
+        f"🆔 ID: {user_id}\n\n"
+        f"📂 Категория: {data.get('category')}\n"
+        f"💰 Бюджет: {data.get('budget')}\n"
+        f"🎯 Приоритет: {data.get('priority')}\n"
+        f"♻️ Б/У: {data.get('used')}\n"
+        f"📝 Модели: {data.get('models')}\n"
+        f"📞 Контакт: {update.message.contact.phone_number}\n\n"
+        f"Статус: ⏳ В обработке"
+    )
+    
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 В работу", callback_data=f"request_status_{request_id}_processing"),
+            InlineKeyboardButton("✅ Выполнена", callback_data=f"request_status_{request_id}_completed")
+        ],
+        [
+            InlineKeyboardButton("❌ Отменить", callback_data=f"request_status_{request_id}_cancelled"),
+            InlineKeyboardButton("💬 Написать", callback_data=f"request_chat_{request_id}")
+        ]
+    ])
+    
     await update.get_bot().send_message(
         ADMIN_ID,
-        f"🔥 Новая заявка!\n"
-        f"Категория: {data.get('category')}\n"
-        f"Бюджет: {data.get('budget')}\n"
-        f"Приоритет: {data.get('priority')}\n"
-        f"Б/У: {data.get('used')}\n"
-        f"Модели: {data.get('models')}\n"
-        f"Контакт: {update.message.contact.phone_number}"
+        admin_text,
+        parse_mode="Markdown",
+        reply_markup=keyboard
     )
+    
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Действие отменено.", reply_markup=main_menu())
     return ConversationHandler.END
+
+# ---------- ОБРАБОТЧИКИ СТАТУСОВ ЗАЯВОК ----------
+async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text("⛔ Доступ запрещён")
+        return
+    
+    parts = query.data.split("_")
+    request_id = int(parts[2])
+    new_status = parts[3]
+    
+    status_map = {
+        'processing': '🔄 В работе',
+        'completed': '✅ Выполнена',
+        'cancelled': '❌ Отменена'
+    }
+    
+    # Получаем данные заявки
+    request_data = cursor.execute(
+        "SELECT user_id, contact FROM requests WHERE id = ?", (request_id,)
+    ).fetchone()
+    
+    if not request_data:
+        await query.edit_message_text("❌ Заявка не найдена")
+        return
+    
+    user_id, contact = request_data
+    
+    # Обновляем статус
+    cursor.execute(
+        "UPDATE requests SET status = ? WHERE id = ?",
+        (new_status, request_id)
+    )
+    db.commit()
+    
+    # Отправляем уведомление пользователю
+    status_text = status_map.get(new_status, new_status)
+    await query.get_bot().send_message(
+        user_id,
+        f"📢 Статус вашей заявки обновлён!\n\n"
+        f"Новый статус: {status_text}\n\n"
+        f"По вопросам: @goojifeed"
+    )
+    
+    await query.edit_message_text(
+        f"{query.message.text}\n\n✅ Статус обновлён: {status_text}"
+    )
+
+async def handle_request_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text("⛔ Доступ запрещён")
+        return
+    
+    parts = query.data.split("_")
+    request_id = int(parts[2])
+    
+    request_data = cursor.execute(
+        "SELECT user_id FROM requests WHERE id = ?", (request_id,)
+    ).fetchone()
+    
+    if not request_data:
+        await query.edit_message_text("❌ Заявка не найдена")
+        return
+    
+    user_id = request_data[0]
+    context.user_data['chat_user_id'] = user_id
+    context.user_data['chat_request_id'] = request_id
+    
+    await query.edit_message_text(
+        f"💬 **Чат с пользователем (заявка #{request_id})**\n\n"
+        "Напишите сообщение, которое будет отправлено пользователю.\n"
+        "Для отмены отправьте /cancel"
+    )
+    
+    # Устанавливаем состояние для чата
+    return EDITING_POST
+
+async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    chat_user_id = context.user_data.get('chat_user_id')
+    request_id = context.user_data.get('chat_request_id')
+    
+    if not chat_user_id:
+        await update.message.reply_text("❌ Нет активного чата")
+        return
+    
+    try:
+        await update.get_bot().send_message(
+            chat_user_id,
+            f"💬 Сообщение от администратора:\n\n{update.message.text}"
+        )
+        await update.message.reply_text("✅ Сообщение отправлено!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
 
 # ---------- НОВОСТИ ----------
 async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -359,11 +528,9 @@ async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text("❌ Новостей не найдено. Попробуйте позже.")
         return
     
-    # Перемешиваем и берем топ-7
     random.shuffle(all_news)
     selected_news = all_news[:7]
     
-    # Генерируем посты
     posts = []
     for i, article in enumerate(selected_news):
         post_data = generate_post(article, i, len(selected_news), article['source'])
@@ -375,7 +542,6 @@ async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'article': article
         })
     
-    # Сохраняем посты
     user_id = update.message.from_user.id
     pending_posts[user_id] = {
         'posts': posts,
@@ -384,8 +550,6 @@ async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     
     await status_msg.edit_text(f"✅ Найдено {len(selected_news)} новостей! Отправляю посты...")
-    
-    # Отправляем первый пост
     await send_post_to_admin(update, context, 0)
 
 async def send_post_to_admin(update, context, index):
@@ -418,7 +582,6 @@ async def send_post_to_admin(update, context, index):
         ]
     ])
     
-    # Если есть изображение — отправляем с фото
     if post.get('image'):
         await update.message.reply_photo(
             photo=post['image'],
@@ -434,7 +597,7 @@ async def send_post_to_admin(update, context, index):
             reply_markup=keyboard
         )
 
-# ---------- КОЛБЭКИ ДЛЯ ПОСТОВ ----------
+# ---------- КОЛБЭКИ ----------
 async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -442,12 +605,9 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = query.from_user.id
     data = pending_posts.get(user_id, {})
     posts = data.get('posts', [])
-    current_index = data.get('current_index', 0)
     
     if not posts:
-        await query.edit_message_caption(
-            caption="❌ Посты не найдены"
-        )
+        await query.edit_message_text("❌ Посты не найдены")
         return
     
     action = query.data
@@ -458,8 +618,8 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         
         channel_id = os.getenv("CHANNEL_ID")
         if not channel_id:
-            await query.edit_message_caption(
-                caption=f"{query.message.caption}\n\n❌ Не указан ID канала. Добавьте CHANNEL_ID в переменные окружения"
+            await query.edit_message_text(
+                "❌ Не указан ID канала. Добавьте CHANNEL_ID"
             )
             return
         
@@ -479,12 +639,12 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                     disable_web_page_preview=True
                 )
             await query.edit_message_caption(
-                caption=f"{query.message.caption}\n\n✅ **Пост опубликован в канале!** 🎉",
+                caption=f"{query.message.caption}\n\n✅ **Пост опубликован!** 🎉",
                 parse_mode="Markdown"
             )
         except Exception as e:
             await query.edit_message_caption(
-                caption=f"{query.message.caption}\n\n❌ Ошибка публикации: {e}"
+                caption=f"{query.message.caption}\n\n❌ Ошибка: {e}"
             )
     
     elif action.startswith('edit_'):
@@ -492,13 +652,8 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data['editing_index'] = index
         
         await query.edit_message_caption(
-            caption=f"✏️ **Редактирование поста {index + 1}**\n\n"
-                    "Отправьте новый текст поста (Markdown поддерживается):\n\n"
-                    "Пример:\n"
-                    "**Заголовок**\n"
-                    "Текст новости...\n\n"
-                    "🔗 [Подробнее](url)\n\n"
-                    "— *NoFuss Guide*"
+            caption="✏️ **Редактирование поста**\n\n"
+                   "Отправьте новый текст (Markdown поддерживается)"
         )
         return
     
@@ -519,19 +674,12 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await send_post_to_admin_by_query(query, current_index)
     
     elif action == 'refresh_news':
-        await query.edit_message_caption(
-            caption="🔄 Обновляю новости..."
-        )
-        new_update = Update(
-            update_id=update.update_id,
-            message=query.message
-        )
+        await query.edit_message_caption(caption="🔄 Обновляю...")
+        new_update = Update(update_id=update.update_id, message=query.message)
         await news_now(new_update, context)
     
     elif action == 'close_news':
-        await query.edit_message_caption(
-            caption="❌ Закрыто"
-        )
+        await query.edit_message_caption(caption="❌ Закрыто")
         pending_posts.pop(user_id, None)
 
 async def send_post_to_admin_by_query(query, index):
@@ -653,7 +801,9 @@ async def main():
     app.add_handler(CommandHandler('news_now', news_now))
     app.add_handler(CommandHandler('admin', admin))
     app.add_handler(CommandHandler('export', export_data))
-    app.add_handler(CallbackQueryHandler(handle_post_callback))
+    app.add_handler(CallbackQueryHandler(handle_post_callback, pattern="^(publish|edit|prev|next|refresh_news|close_news)"))
+    app.add_handler(CallbackQueryHandler(handle_request_status, pattern="^request_status_"))
+    app.add_handler(CallbackQueryHandler(handle_request_chat, pattern="^request_chat_"))
     app.add_handler(MessageHandler(filters.Regex('❓ FAQ'), faq))
     app.add_handler(MessageHandler(filters.Regex('💬 Связаться'), contact_direct))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
