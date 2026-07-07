@@ -76,7 +76,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
 # ---------- СОСТОЯНИЯ ----------
-CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING_POST = range(9)
+CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING_POST, AFTER_SUBMIT = range(10)
 
 # ---------- ДАННЫЕ ДЛЯ КРИТЕРИЕВ ----------
 CATEGORIES = ["📱 Смартфоны", "💻 Ноутбуки", "📺 Телевизоры", "📲 Планшеты", "⌚ Носимая электроника", "🔧 Другое"]
@@ -98,6 +98,18 @@ PRIORITIES = {
 }
 
 NO_PRIORITY_CATEGORIES = ["⌚ Носимая электроника", "🔧 Другое"]
+
+# ---------- ЗАЩИТА ОТ СПАМА ----------
+user_last_request_time = {}
+
+def can_send_request(user_id):
+    """Проверяет, можно ли отправить заявку (не чаще 1 раза в минуту)"""
+    now = time.time()
+    if user_id in user_last_request_time:
+        if now - user_last_request_time[user_id] < 60:
+            return False, int(60 - (now - user_last_request_time[user_id]))
+    user_last_request_time[user_id] = now
+    return True, 0
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 def get_progress_bar(step, total=6):
@@ -195,6 +207,13 @@ def edit_select_inline():
         [InlineKeyboardButton("🎯 Приоритет", callback_data="edit_priority")],
         [InlineKeyboardButton("♻️ Б/У", callback_data="edit_used")],
         [InlineKeyboardButton("📝 Модели", callback_data="edit_models")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="home")]
+    ])
+
+def after_submit_inline():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🆕 Новая заявка", callback_data="new_request")],
+        [InlineKeyboardButton("📋 Мои заявки", callback_data="my_requests")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="home")]
     ])
 
@@ -521,6 +540,15 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     if query.data == "confirm_yes":
+        # Проверка на спам
+        user_id = query.from_user.id
+        can_send, wait_time = can_send_request(user_id)
+        if not can_send:
+            await query.edit_message_text(
+                f"⏳ Пожалуйста, подождите {wait_time} секунд перед отправкой новой заявки."
+            )
+            return CONFIRM
+        
         await query.message.delete()
         await query.message.reply_text(
             "📞 Поделитесь контактом для связи:",
@@ -692,6 +720,12 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=remove_keyboard()
     )
     
+    # Показываем меню после отправки заявки
+    await update.message.reply_text(
+        "📋 Что хотите сделать дальше?",
+        reply_markup=after_submit_inline()
+    )
+    
     admin_text = (
         f"🔥 **Новая заявка!**\n\n"
         f"📋 № заявки: {request_number}\n"
@@ -715,7 +749,67 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.get_bot().send_message(ADMIN_ID, admin_text, parse_mode="Markdown", reply_markup=keyboard)
     
-    return ConversationHandler.END
+    return AFTER_SUBMIT
+
+# ---------- ОБРАБОТЧИК AFTER_SUBMIT ----------
+async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    action = query.data
+    
+    if action == "new_request":
+        context.user_data.clear()
+        await query.edit_message_text(
+            f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
+            "📱 Выберите категорию техники:",
+            reply_markup=categories_inline()
+        )
+        return CATEGORY
+    
+    elif action == "my_requests":
+        user_id = query.from_user.id
+        requests = cursor.execute(
+            """SELECT id, request_number, category, status, created_at, budget, priority, used, models
+            FROM requests WHERE user_id=? 
+            ORDER BY created_at DESC LIMIT 10""",
+            (user_id,)
+        ).fetchall()
+        
+        if not requests:
+            await query.edit_message_text(
+                "📋 У вас пока нет заявок.\n\n"
+                "Нажмите '🆕 Новая заявка' чтобы создать первую!",
+                reply_markup=after_submit_inline()
+            )
+            return AFTER_SUBMIT
+        
+        text = "📋 **Ваши последние заявки:**\n\n"
+        for req in requests:
+            status = get_status_emoji(req[3])
+            date = req[4][:10] if req[4] else 'Дата неизвестна'
+            text += f"#{req[1]} {status} **{req[2]}**\n"
+            text += f"   📅 {date} | {get_status_text(req[3])}\n"
+            text += f"   💰 {req[5]}\n"
+            if req[6] and req[6] != "Не требуется":
+                text += f"   🎯 {req[6]}\n"
+            text += "\n"
+        
+        text += "Нажмите '🆕 Новая заявка' чтобы создать новую"
+        
+        await query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=after_submit_inline()
+        )
+        return AFTER_SUBMIT
+    
+    elif action == "home":
+        await query.edit_message_text(
+            "🏠 Вы в главном меню\n\nВыберите категорию техники:",
+            reply_markup=categories_inline()
+        )
+        return CATEGORY
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Действие отменено.", reply_markup=remove_keyboard())
@@ -1117,6 +1211,9 @@ async def main():
             CONTACT: [
                 MessageHandler(filters.CONTACT, contact_handler),
                 CallbackQueryHandler(handle_navigation, pattern="^home$")
+            ],
+            AFTER_SUBMIT: [
+                CallbackQueryHandler(handle_after_submit, pattern="^(new_request|my_requests|home)$")
             ],
             EDITING_POST: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_post),
