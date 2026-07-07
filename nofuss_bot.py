@@ -5,8 +5,9 @@ import sqlite3
 import csv
 import re
 import json
-import feedparser
 import hashlib
+import requests
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from functools import wraps
 from aiohttp import web
@@ -89,7 +90,6 @@ def migrate_db():
     )
     """)
     
-    # Таблица для хранения опубликованных новостей
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS published_news (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,7 +158,6 @@ END;
 """)
 db.commit()
 
-# Обновляем номера существующих заявок
 cursor.execute("""
 UPDATE requests 
 SET request_number = (
@@ -175,9 +174,78 @@ WHERE request_number IS NULL OR request_number != (
 db.commit()
 
 
+# ---------- RSS ПАРСЕР (БЕЗ feedparser) ----------
+def parse_rss_feed(url: str) -> List[Dict]:
+    """Парсит RSS-ленту без feedparser"""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.get(url, timeout=15, headers=headers)
+        response.raise_for_status()
+        
+        root = ET.fromstring(response.content)
+        
+        # Пробуем RSS 2.0
+        channel = root.find('channel')
+        if channel is None:
+            # Пробуем Atom
+            channel = root.find('{http://www.w3.org/2005/Atom}feed')
+            if channel is None:
+                return []
+        
+        items = []
+        entries = channel.findall('item')
+        if not entries:
+            entries = channel.findall('{http://www.w3.org/2005/Atom}entry')
+        
+        for item in entries[:10]:
+            # Заголовок
+            title = item.find('title')
+            title_text = title.text if title is not None else 'Без заголовка'
+            title_text = title_text.strip()
+            
+            # Ссылка
+            link = item.find('link')
+            link_text = ''
+            if link is not None:
+                link_text = link.text if link.text else link.get('href', '')
+            if not link_text:
+                link = item.find('{http://www.w3.org/2005/Atom}link')
+                link_text = link.get('href') if link is not None else ''
+            
+            # Дата
+            pub_date = item.find('pubDate')
+            if pub_date is None:
+                pub_date = item.find('published')
+            pub_date_text = pub_date.text if pub_date is not None else ''
+            
+            # Описание
+            description = item.find('description')
+            if description is None:
+                description = item.find('summary')
+            desc_text = description.text if description is not None else ''
+            if desc_text:
+                # Убираем HTML-теги
+                desc_text = re.sub(r'<[^>]+>', ' ', desc_text)
+                desc_text = re.sub(r'\s+', ' ', desc_text).strip()
+                desc_text = desc_text[:500]
+            
+            items.append({
+                'title': title_text,
+                'link': link_text,
+                'published': pub_date_text,
+                'summary': desc_text
+            })
+        
+        return items
+    except Exception as e:
+        logger.error(f"Ошибка парсинга RSS {url}: {e}")
+        return []
+
+
 # ---------- RSS ИСТОЧНИКИ ----------
 TECH_RSS_FEEDS = {
-    # Крупные технологические издания
     "The Verge": "https://www.theverge.com/rss/index.xml",
     "TechCrunch": "https://techcrunch.com/feed/",
     "Wired": "https://www.wired.com/feed/rss",
@@ -204,8 +272,6 @@ TECH_RSS_FEEDS = {
     "SamMobile": "https://www.sammobile.com/feed/",
     "Xiaomi Today": "https://xiaomitoday.com/feed/",
     "Huawei Central": "https://www.huaweicentral.com/feed/",
-    
-    # Официальные блоги компаний
     "Google Blog": "https://blog.google/rss/",
     "Google Developer Blog": "https://developers.googleblog.com/feeds/posts/default",
     "Google Security Blog": "https://security.googleblog.com/feeds/posts/default",
@@ -449,7 +515,6 @@ def get_status_text(status):
     return status_map.get(status, status)
 
 def get_cached_stats(force_refresh=False):
-    """Кеширование статистики для быстрого доступа"""
     global cache
     now = time.time()
     
@@ -622,57 +687,39 @@ class NewsManager:
         """Парсит все RSS-ленты и собирает свежие новости"""
         all_articles = []
         sources_success = 0
-        sources_fail = 0
         
         for source, url in TECH_RSS_FEEDS.items():
-            try:
-                feed = feedparser.parse(url)
-                
-                if feed.entries:
-                    sources_success += 1
-                    for entry in feed.entries[:5]:
-                        published_parsed = entry.get('published_parsed')
-                        if published_parsed:
-                            pub_time = time.mktime(published_parsed)
-                            if time.time() - pub_time > 604800:
-                                continue
-                        
-                        content_hash = hashlib.md5(
-                            f"{entry.get('title', '')}{entry.get('link', '')}".encode()
-                        ).hexdigest()
-                        
-                        existing = cursor.execute(
-                            "SELECT id FROM published_news WHERE hash = ?", 
-                            (content_hash,)
-                        ).fetchone()
-                        
-                        if existing:
-                            continue
-                        
-                        all_articles.append({
-                            'title': entry.get('title', 'Без заголовка'),
-                            'summary': entry.get('summary', ''),
-                            'link': entry.get('link', ''),
-                            'source': source,
-                            'published': entry.get('published', ''),
-                            'hash': content_hash,
-                            'categories': entry.get('tags', [])
-                        })
-                else:
-                    sources_fail += 1
-                    logger.warning(f"Нет записей в RSS: {source}")
+            articles = parse_rss_feed(url)
+            if articles:
+                sources_success += 1
+                for article in articles:
+                    content_hash = hashlib.md5(
+                        f"{article['title']}{article['link']}".encode()
+                    ).hexdigest()
                     
-            except Exception as e:
-                sources_fail += 1
-                logger.error(f"Ошибка парсинга {source}: {e}")
+                    existing = cursor.execute(
+                        "SELECT id FROM published_news WHERE hash = ?", 
+                        (content_hash,)
+                    ).fetchone()
+                    
+                    if existing:
+                        continue
+                    
+                    all_articles.append({
+                        'title': article['title'],
+                        'summary': article['summary'],
+                        'link': article['link'],
+                        'source': source,
+                        'published': article['published'],
+                        'hash': content_hash,
+                        'categories': []
+                    })
         
-        logger.info(f"Парсинг завершен: успешно {sources_success}, ошибок {sources_fail}")
-        
+        logger.info(f"Парсинг завершен: успешно {sources_success} источников")
         all_articles.sort(key=lambda x: x.get('published', ''), reverse=True)
         return all_articles[:30]
     
     def get_educational_post(self, day_offset: int = 0) -> Dict:
-        """Генерирует образовательный пост"""
         topic = EDUCATIONAL_TOPICS[day_offset % len(EDUCATIONAL_TOPICS)]
         
         post_text = f"📚 **{topic['title']}**\n\n"
@@ -689,7 +736,6 @@ class NewsManager:
         }
     
     async def generate_news_post(self, articles: List[Dict]) -> Dict:
-        """Генерирует пост на основе новостей"""
         if not articles:
             return None
         
@@ -700,7 +746,8 @@ class NewsManager:
         for i, article in enumerate(selected, 1):
             post_text += f"{i}. **{article['title']}**\n"
             post_text += f"   📌 {article['source']}\n"
-            post_text += f"   📅 {article['published'][:10] if article['published'] else 'Дата неизвестна'}\n"
+            if article['published']:
+                post_text += f"   📅 {article['published'][:10]}\n"
             post_text += f"   🔗 [Читать подробнее]({article['link']})\n\n"
         
         post_text += "➡️ **Хотите быть в курсе всех новостей?**\n"
@@ -715,7 +762,6 @@ class NewsManager:
         }
     
     async def prepare_posts_for_admin(self) -> Dict:
-        """Подготавливает посты для отправки админу"""
         articles = await self.fetch_all_news()
         
         if not articles:
@@ -733,7 +779,6 @@ class NewsManager:
         }
     
     def mark_published(self, post_type: str, content: str, title: str, source: str = '', link: str = ''):
-        """Отмечает пост как опубликованный"""
         content_hash = hashlib.md5(f"{title}{content}".encode()).hexdigest()
         
         cursor.execute(
@@ -1307,7 +1352,6 @@ async def finish_request(message: Message, state: FSMContext):
 # ---------- НОВОСТНЫЕ КОМАНДЫ ----------
 @dp.message(Command("news_now"))
 async def get_news_now(message: Message):
-    """Принудительный сбор и отправка новостей админу"""
     if message.from_user.id != ADMIN_ID:
         await message.answer("⛔ Эта команда только для администратора")
         return
@@ -1325,17 +1369,14 @@ async def get_news_now(message: Message):
         
         news_manager.pending_posts[message.from_user.id] = posts_data
         
-        # Отправляем новостной пост
         news_post = posts_data.get('news')
         if news_post:
             await send_post_to_admin(message, news_post, 'news', 0)
         
-        # Отправляем образовательный пост
         edu_post = posts_data.get('educational')
         if edu_post:
             await send_post_to_admin(message, edu_post, 'educational', 1)
         
-        # Отправляем список новостей отдельно
         articles = posts_data.get('articles', [])
         if articles:
             text = "📰 **Список собранных новостей:**\n\n"
@@ -1360,7 +1401,6 @@ async def get_news_now(message: Message):
 
 
 async def send_post_to_admin(message: Message, post: Dict, post_type: str, index: int):
-    """Отправляет пост админу с кнопками"""
     title = post.get('title', '')
     content = post.get('content', '')
     
@@ -1530,7 +1570,7 @@ async def edit_post_callback(callback: CallbackQuery, state: FSMContext):
         "📝 Напишите новый текст поста (Markdown поддерживается):",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton("❌ Отмена", callback_data="close_news")]
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="close_news")]
             ]
         )
     )
@@ -1976,7 +2016,6 @@ async def cancel_command(message: Message, state: FSMContext):
 
 # ---------- ФОНОВАЯ ПРОВЕРКА НОВОСТЕЙ ----------
 async def scheduled_news_check():
-    """Фоновый процесс для автоматической проверки новостей"""
     logger.info("Scheduled news checker started")
     
     channel_id = os.getenv("CHANNEL_ID")
@@ -2069,10 +2108,8 @@ async def fallback_callback(callback: CallbackQuery):
 async def main():
     global news_manager
     
-    # Запускаем веб-сервер
     await start_web_server()
     
-    # Проверяем наличие CHANNEL_ID
     channel_id = os.getenv("CHANNEL_ID")
     if channel_id:
         logger.info(f"Канал для публикаций: {channel_id}")
@@ -2092,13 +2129,10 @@ async def main():
             "Иначе посты не будут публиковаться в канал."
         )
     
-    # Инициализируем NewsManager с channel_id
     news_manager = NewsManager(ADMIN_ID, channel_id)
     
-    # Запускаем фоновую проверку новостей
     asyncio.create_task(scheduled_news_check())
     
-    # Отправляем приветственное сообщение админу
     await bot.send_message(
         ADMIN_ID,
         "🤖 **Бот NoFuss Guide запущен!**\n\n"
