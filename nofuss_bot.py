@@ -34,6 +34,9 @@ cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     username TEXT,
+    first_name TEXT,
+    language TEXT DEFAULT 'ru',
+    theme TEXT DEFAULT 'light',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
@@ -52,6 +55,17 @@ CREATE TABLE IF NOT EXISTS requests (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     confirmed_at TIMESTAMP,
     request_number INTEGER
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id INTEGER,
+    user_id INTEGER,
+    rating INTEGER,
+    comment TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
 
@@ -76,7 +90,194 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
 # ---------- СОСТОЯНИЯ ----------
-CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING_POST, AFTER_SUBMIT = range(10)
+CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING_POST, AFTER_SUBMIT, FEEDBACK = range(11)
+
+# ---------- МУЛЬТИЯЗЫЧНОСТЬ ----------
+TRANSLATIONS = {
+    'ru': {
+        'welcome': "👋 Добро пожаловать в NoFuss Guide!\n\n🔍 Бот помогает собрать все требования к технике, а конкретный подбор уже производит специалист, которому можно будет написать лично для уточнения деталей.",
+        'choose_category': "📱 Выберите категорию техники:",
+        'choose_budget': "💰 Выберите бюджет:",
+        'choose_priority': "🎯 Что для вас наиболее важно?",
+        'choose_used': "♻️ Рассматриваете б/у технику?",
+        'choose_models': "📝 Хотите указать модели?",
+        'confirm_request': "📋 Проверьте данные перед отправкой:",
+        'confirm_btn': "✅ Подтвердить заявку",
+        'edit_btn': "✏️ Редактировать данные",
+        'contact_request': "📞 Поделитесь контактом для связи:",
+        'request_accepted': "✅ Заявка принята!",
+        'new_request': "🆕 Новая заявка",
+        'my_requests': "📋 Мои заявки",
+        'home': "🏠 Главное меню",
+        'back': "⬅️ Назад",
+        'cancel': "❌ Отмена",
+        'faq': "❓ Частые вопросы",
+        'stats': "📊 Моя статистика",
+        'about': "ℹ️ О проекте",
+        'commands': "📋 Список команд",
+        'feedback_btn': "⭐ Оставить отзыв",
+        'feedback_text': "Пожалуйста, оцените нашу работу (1-5):",
+        'feedback_thanks': "🙏 Спасибо за ваш отзыв!",
+        'theme_changed': "🎨 Тема изменена на {theme}",
+        'language_changed': "🌐 Язык изменён на {lang}",
+        'wait_spam': "⏳ Пожалуйста, подождите {seconds} секунд перед отправкой новой заявки."
+    },
+    'en': {
+        'welcome': "👋 Welcome to NoFuss Guide!\n\n🔍 The bot helps collect all your tech requirements, and a specialist will handle the detailed selection.",
+        'choose_category': "📱 Choose a category:",
+        'choose_budget': "💰 Choose your budget:",
+        'choose_priority': "🎯 What matters most to you?",
+        'choose_used': "♻️ Do you consider used devices?",
+        'choose_models': "📝 Do you want to specify models?",
+        'confirm_request': "📋 Check your data before submitting:",
+        'confirm_btn': "✅ Confirm request",
+        'edit_btn': "✏️ Edit data",
+        'contact_request': "📞 Share your contact:",
+        'request_accepted': "✅ Request accepted!",
+        'new_request': "🆕 New request",
+        'my_requests': "📋 My requests",
+        'home': "🏠 Main menu",
+        'back': "⬅️ Back",
+        'cancel': "❌ Cancel",
+        'faq': "❓ FAQ",
+        'stats': "📊 My stats",
+        'about': "ℹ️ About",
+        'commands': "📋 Commands",
+        'feedback_btn': "⭐ Leave feedback",
+        'feedback_text': "Please rate our service (1-5):",
+        'feedback_thanks': "🙏 Thank you for your feedback!",
+        'theme_changed': "🎨 Theme changed to {theme}",
+        'language_changed': "🌐 Language changed to {lang}",
+        'wait_spam': "⏳ Please wait {seconds} seconds before sending a new request."
+    },
+    'kk': {
+        'welcome': "👋 NoFuss Guide-ге қош келдіңіз!\n\n🔍 Бот техникаға қойылатын барлық талаптарды жинауға көмектеседі, ал нақты таңдауды маман жасайды.",
+        'choose_category': "📱 Техника санатын таңдаңыз:",
+        'choose_budget': "💰 Бюджетіңізді таңдаңыз:",
+        'choose_priority': "🎯 Сіз үшін ең маңыздысы не?",
+        'choose_used': "♻️ Пайдаланылған техниканы қарастырасыз ба?",
+        'choose_models': "📝 Модельдерді көрсеткіңіз келе ме?",
+        'confirm_request': "📋 Жіберу алдында деректеріңізді тексеріңіз:",
+        'confirm_btn': "✅ Өтінімді растау",
+        'edit_btn': "✏️ Деректерді өңдеу",
+        'contact_request': "📞 Байланыс үшін контактіңізбен бөлісіңіз:",
+        'request_accepted': "✅ Өтінім қабылданды!",
+        'new_request': "🆕 Жаңа өтінім",
+        'my_requests': "📋 Менің өтінімдерім",
+        'home': "🏠 Басты мәзір",
+        'back': "⬅️ Артқа",
+        'cancel': "❌ Болдырмау",
+        'faq': "❓ Жиі қойылатын сұрақтар",
+        'stats': "📊 Менің статистикам",
+        'about': "ℹ️ Жоба туралы",
+        'commands': "📋 Командалар тізімі",
+        'feedback_btn': "⭐ Пікір қалдыру",
+        'feedback_text': "Біздің жұмысты бағалаңыз (1-5):",
+        'feedback_thanks': "🙏 Пікіріңіз үшін рахмет!",
+        'theme_changed': "🎨 Тақырып {theme} өзгертілді",
+        'language_changed': "🌐 Тіл {lang} өзгертілді",
+        'wait_spam': "⏳ Жаңа өтінім жіберу алдында {seconds} секунд күтіңіз."
+    }
+}
+
+LANGUAGES = {
+    'ru': '🇷🇺 Русский',
+    'en': '🇬🇧 English',
+    'kk': '🇰🇿 Қазақша'
+}
+
+THEMES = {
+    'light': '☀️ Светлая',
+    'dark': '🌙 Тёмная'
+}
+
+# ---------- КЕШ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ----------
+user_cache = {}
+
+def get_user_lang(user_id):
+    if user_id in user_cache:
+        return user_cache[user_id].get('language', 'ru')
+    user = cursor.execute("SELECT language FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    lang = user[0] if user else 'ru'
+    if user_id not in user_cache:
+        user_cache[user_id] = {}
+    user_cache[user_id]['language'] = lang
+    return lang
+
+def get_user_theme(user_id):
+    if user_id in user_cache:
+        return user_cache[user_id].get('theme', 'light')
+    user = cursor.execute("SELECT theme FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    theme = user[0] if user else 'light'
+    if user_id not in user_cache:
+        user_cache[user_id] = {}
+    user_cache[user_id]['theme'] = theme
+    return theme
+
+def get_text(user_id, key, **kwargs):
+    lang = get_user_lang(user_id)
+    text = TRANSLATIONS.get(lang, TRANSLATIONS['ru']).get(key, key)
+    if kwargs:
+        text = text.format(**kwargs)
+    return text
+
+def update_user_lang(user_id, lang):
+    cursor.execute("UPDATE users SET language = ? WHERE user_id = ?", (lang, user_id))
+    db.commit()
+    if user_id in user_cache:
+        user_cache[user_id]['language'] = lang
+
+def update_user_theme(user_id, theme):
+    cursor.execute("UPDATE users SET theme = ? WHERE user_id = ?", (theme, user_id))
+    db.commit()
+    if user_id in user_cache:
+        user_cache[user_id]['theme'] = theme
+
+# ---------- ПОПУЛЯРНЫЕ МОДЕЛИ ----------
+POPULAR_MODELS = {
+    "📱 Смартфоны": [
+        "📱 iPhone 15 Pro Max",
+        "📱 Samsung Galaxy S24 Ultra",
+        "📱 Xiaomi 14 Pro",
+        "📱 Google Pixel 8 Pro",
+        "📱 OnePlus 12"
+    ],
+    "💻 Ноутбуки": [
+        "💻 MacBook Pro 16\"",
+        "💻 Dell XPS 15",
+        "💻 Lenovo ThinkPad X1",
+        "💻 Asus ROG Zephyrus",
+        "💻 HP Spectre x360"
+    ],
+    "📺 Телевизоры": [
+        "📺 Samsung QLED 4K",
+        "📺 LG OLED C3",
+        "📺 Sony Bravia XR",
+        "📺 TCL Mini-LED",
+        "📺 Hisense ULED"
+    ],
+    "📲 Планшеты": [
+        "📲 iPad Pro 12.9\"",
+        "📲 Samsung Galaxy Tab S9",
+        "📲 Lenovo Tab P12",
+        "📲 Huawei MatePad Pro",
+        "📲 Microsoft Surface Pro"
+    ],
+    "⌚ Носимая электроника": [
+        "⌚ Apple Watch Ultra 2",
+        "⌚ Samsung Galaxy Watch 6",
+        "⌚ Garmin Fenix 7",
+        "⌚ Xiaomi Watch 2 Pro",
+        "⌚ Huawei Watch GT 4"
+    ],
+    "🔧 Другое": [
+        "🔧 Наушники Sony WH-1000XM5",
+        "🔧 Колонка JBL Charge 5",
+        "🔧 Монитор LG UltraFine",
+        "🔧 Роутер Asus RT-AX88U",
+        "🔧 Повербанк Anker 737"
+    ]
+}
 
 # ---------- ДАННЫЕ ДЛЯ КРИТЕРИЕВ ----------
 CATEGORIES = ["📱 Смартфоны", "💻 Ноутбуки", "📺 Телевизоры", "📲 Планшеты", "⌚ Носимая электроника", "🔧 Другое"]
@@ -103,7 +304,6 @@ NO_PRIORITY_CATEGORIES = ["⌚ Носимая электроника", "🔧 Д�
 user_last_request_time = {}
 
 def can_send_request(user_id):
-    """Проверяет, можно ли отправить заявку (не чаще 1 раза в минуту)"""
     now = time.time()
     if user_id in user_last_request_time:
         if now - user_last_request_time[user_id] < 60:
@@ -128,8 +328,12 @@ def get_status_text(status):
     status_map = {'pending': 'В обработке', 'processing': 'В работе', 'completed': 'Выполнена', 'cancelled': 'Отменена'}
     return status_map.get(status, status)
 
+def get_popular_models(category):
+    models = POPULAR_MODELS.get(category, [])
+    return "\n".join([f"  • {m}" for m in models])
+
 # ---------- ИНЛАЙН-КЛАВИАТУРЫ ----------
-def categories_inline():
+def categories_inline(user_id):
     buttons = []
     row = []
     for i, cat in enumerate(CATEGORIES):
@@ -139,9 +343,10 @@ def categories_inline():
             row = []
     if row:
         buttons.append(row)
+    buttons.append([InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")])
     return InlineKeyboardMarkup(buttons)
 
-def budget_inline(category):
+def budget_inline(category, user_id):
     buttons = []
     row = []
     for i, opt in enumerate(BUDGETS.get(category, [])):
@@ -152,12 +357,12 @@ def budget_inline(category):
     if row:
         buttons.append(row)
     buttons.append([
-        InlineKeyboardButton("⬅️ Назад", callback_data="back_to_categories"),
-        InlineKeyboardButton("🏠 Главное меню", callback_data="home")
+        InlineKeyboardButton(get_text(user_id, 'back'), callback_data="back_to_categories"),
+        InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")
     ])
     return InlineKeyboardMarkup(buttons)
 
-def priority_inline(category):
+def priority_inline(category, user_id):
     buttons = []
     row = []
     for i, opt in enumerate(PRIORITIES.get(category, [])):
@@ -168,53 +373,86 @@ def priority_inline(category):
     if row:
         buttons.append(row)
     buttons.append([
-        InlineKeyboardButton("⬅️ Назад", callback_data="back_to_budget"),
-        InlineKeyboardButton("🏠 Главное меню", callback_data="home")
+        InlineKeyboardButton(get_text(user_id, 'back'), callback_data="back_to_budget"),
+        InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")
     ])
     return InlineKeyboardMarkup(buttons)
 
-def used_inline():
+def used_inline(user_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Да", callback_data="used_yes")],
         [InlineKeyboardButton("❌ Нет", callback_data="used_no")],
         [InlineKeyboardButton("⚖️ Не принципиально", callback_data="used_any")],
         [
-            InlineKeyboardButton("⬅️ Назад", callback_data="back_to_priority"),
-            InlineKeyboardButton("🏠 Главное меню", callback_data="home")
+            InlineKeyboardButton(get_text(user_id, 'back'), callback_data="back_to_priority"),
+            InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")
         ]
     ])
 
-def models_inline():
+def models_inline(user_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 Указать модели", callback_data="models_specify")],
         [InlineKeyboardButton("⏭ Пропустить", callback_data="models_skip")],
         [
-            InlineKeyboardButton("⬅️ Назад", callback_data="back_to_used"),
-            InlineKeyboardButton("🏠 Главное меню", callback_data="home")
+            InlineKeyboardButton(get_text(user_id, 'back'), callback_data="back_to_used"),
+            InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")
         ]
     ])
 
-def confirm_inline():
+def confirm_inline(user_id):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Подтвердить заявку", callback_data="confirm_yes")],
-        [InlineKeyboardButton("✏️ Редактировать данные", callback_data="confirm_edit")]
+        [InlineKeyboardButton(get_text(user_id, 'confirm_btn'), callback_data="confirm_yes")],
+        [InlineKeyboardButton(get_text(user_id, 'edit_btn'), callback_data="confirm_edit")]
     ])
 
-def edit_select_inline():
+def edit_select_inline(user_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📂 Категория", callback_data="edit_category")],
         [InlineKeyboardButton("💰 Бюджет", callback_data="edit_budget")],
         [InlineKeyboardButton("🎯 Приоритет", callback_data="edit_priority")],
         [InlineKeyboardButton("♻️ Б/У", callback_data="edit_used")],
         [InlineKeyboardButton("📝 Модели", callback_data="edit_models")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="home")]
+        [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
     ])
 
-def after_submit_inline():
+def after_submit_inline(user_id):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🆕 Новая заявка", callback_data="new_request")],
-        [InlineKeyboardButton("📋 Мои заявки", callback_data="my_requests")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="home")]
+        [InlineKeyboardButton(get_text(user_id, 'new_request'), callback_data="new_request")],
+        [InlineKeyboardButton(get_text(user_id, 'my_requests'), callback_data="my_requests")],
+        [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
+    ])
+
+def settings_inline(user_id):
+    lang = get_user_lang(user_id)
+    theme = get_user_theme(user_id)
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🌐 Язык: {LANGUAGES.get(lang, 'Русский')}", callback_data="settings_lang")],
+        [InlineKeyboardButton(f"🎨 Тема: {THEMES.get(theme, 'Светлая')}", callback_data="settings_theme")],
+        [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
+    ])
+
+def language_select_inline():
+    buttons = []
+    for code, name in LANGUAGES.items():
+        buttons.append([InlineKeyboardButton(name, callback_data=f"lang_{code}")])
+    buttons.append([InlineKeyboardButton("🏠 Назад", callback_data="settings")])
+    return InlineKeyboardMarkup(buttons)
+
+def theme_select_inline():
+    buttons = []
+    for code, name in THEMES.items():
+        buttons.append([InlineKeyboardButton(name, callback_data=f"theme_{code}")])
+    buttons.append([InlineKeyboardButton("🏠 Назад", callback_data="settings")])
+    return InlineKeyboardMarkup(buttons)
+
+def feedback_inline(request_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ 1", callback_data=f"feedback_{request_id}_1")],
+        [InlineKeyboardButton("⭐⭐ 2", callback_data=f"feedback_{request_id}_2")],
+        [InlineKeyboardButton("⭐⭐⭐ 3", callback_data=f"feedback_{request_id}_3")],
+        [InlineKeyboardButton("⭐⭐⭐⭐ 4", callback_data=f"feedback_{request_id}_4")],
+        [InlineKeyboardButton("⭐⭐⭐⭐⭐ 5", callback_data=f"feedback_{request_id}_5")],
+        [InlineKeyboardButton("❌ Пропустить", callback_data=f"feedback_skip_{request_id}")]
     ])
 
 def contact_keyboard():
@@ -396,30 +634,33 @@ def generate_post(article, index, total, source_name):
 
 # ---------- ОБРАБОТЧИКИ ЗАЯВОК ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    user_name = update.message.from_user.first_name or ""
+    
     context.user_data.clear()
-    cursor.execute("INSERT OR IGNORE INTO users(user_id, username) VALUES(?, ?)", 
-                   (update.message.from_user.id, update.message.from_user.username or ''))
+    cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
+                   (user_id, update.message.from_user.username or '', user_name))
     db.commit()
     
     await update.message.reply_text(
-        "👋 Добро пожаловать в NoFuss Guide!\n\n"
-        "🔍 Бот помогает собрать все требования к технике, "
-        "а конкретный подбор уже производит специалист, которому можно будет "
-        "написать лично для уточнения деталей.\n\n"
-        "📱 Выберите категорию техники:",
+        f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
+        f"🔥 *Популярные модели сейчас:*\n{get_popular_models('📱 Смартфоны')}\n\n"
+        f"📱 {get_text(user_id, 'choose_category')}",
+        parse_mode="Markdown",
         reply_markup=remove_keyboard()
     )
     
     await update.message.reply_text(
         f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
-        "📱 Выберите категорию техники:",
-        reply_markup=categories_inline()
+        f"{get_text(user_id, 'choose_category')}",
+        reply_markup=categories_inline(user_id)
     )
     return CATEGORY
 
 async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    user_id = query.from_user.id
     
     category = CATEGORIES[int(query.data.split("_")[1])]
     context.user_data['category'] = category
@@ -427,14 +668,17 @@ async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
         f"✅ Выбрано: {category}\n\n"
-        "💰 Выберите бюджет:",
-        reply_markup=budget_inline(category)
+        f"🔥 *Популярные модели в этой категории:*\n{get_popular_models(category)}\n\n"
+        f"{get_text(user_id, 'choose_budget')}",
+        parse_mode="Markdown",
+        reply_markup=budget_inline(category, user_id)
     )
     return BUDGET
 
 async def handle_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    user_id = query.from_user.id
     
     category = context.user_data.get('category', '📱 Смартфоны')
     budget = BUDGETS.get(category, [])[int(query.data.split("_")[1])]
@@ -444,21 +688,22 @@ async def handle_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['priority'] = "Не требуется"
         context.user_data['used'] = "Не требуется"
         context.user_data['models'] = "Не указано"
-        await show_confirm(query, context)
+        await show_confirm(query, context, user_id)
         return CONFIRM
     
     await query.edit_message_text(
         f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
         f"✅ Категория: {category}\n"
         f"💰 Бюджет: {budget}\n\n"
-        "🎯 Что для вас наиболее важно?",
-        reply_markup=priority_inline(category)
+        f"{get_text(user_id, 'choose_priority')}",
+        reply_markup=priority_inline(category, user_id)
     )
     return PRIORITY
 
 async def handle_priority(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    user_id = query.from_user.id
     
     category = context.user_data.get('category', '📱 Смартфоны')
     priority = PRIORITIES.get(category, [])[int(query.data.split("_")[1])]
@@ -469,14 +714,15 @@ async def handle_priority(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Категория: {category}\n"
         f"💰 Бюджет: {context.user_data.get('budget')}\n"
         f"🎯 Приоритет: {priority}\n\n"
-        "♻️ Рассматриваете б/у технику?",
-        reply_markup=used_inline()
+        f"{get_text(user_id, 'choose_used')}",
+        reply_markup=used_inline(user_id)
     )
     return USED
 
 async def handle_used(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    user_id = query.from_user.id
     
     used_map = {'used_yes': 'Да', 'used_no': 'Нет', 'used_any': 'Не принципиально'}
     used = used_map.get(query.data, 'Не указано')
@@ -488,14 +734,15 @@ async def handle_used(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💰 Бюджет: {context.user_data.get('budget')}\n"
         f"🎯 Приоритет: {context.user_data.get('priority')}\n"
         f"♻️ Б/У: {used}\n\n"
-        "📝 Хотите указать модели?",
-        reply_markup=models_inline()
+        f"{get_text(user_id, 'choose_models')}",
+        reply_markup=models_inline(user_id)
     )
     return MODELS
 
 async def handle_models(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    user_id = query.from_user.id
     
     if query.data == "models_specify":
         await query.edit_message_text(
@@ -506,20 +753,21 @@ async def handle_models(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MODELS
     else:
         context.user_data['models'] = "Не указано"
-        await show_confirm(query, context)
+        await show_confirm(query, context, user_id)
         return CONFIRM
 
 async def models_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
     context.user_data['models'] = update.message.text
-    await show_confirm(update, context)
+    await show_confirm(update, context, user_id)
     return CONFIRM
 
-async def show_confirm(update_or_query, context):
+async def show_confirm(update_or_query, context, user_id):
     data = context.user_data
     
     text = (
         f"{get_progress_bar(6)} {get_step_text(6)}\n\n"
-        "📋 Проверьте данные перед отправкой:\n\n"
+        f"{get_text(user_id, 'confirm_request')}\n\n"
         f"📂 Категория: {data.get('category', 'Не указано')}\n"
         f"💰 Бюджет: {data.get('budget', 'Не указано')}\n"
         f"🎯 Приоритет: {data.get('priority', 'Не указано')}\n"
@@ -530,28 +778,27 @@ async def show_confirm(update_or_query, context):
     )
     
     if hasattr(update_or_query, 'edit_message_text'):
-        await update_or_query.edit_message_text(text, reply_markup=confirm_inline())
+        await update_or_query.edit_message_text(text, reply_markup=confirm_inline(user_id))
     else:
-        await update_or_query.message.reply_text(text, reply_markup=confirm_inline())
+        await update_or_query.message.reply_text(text, reply_markup=confirm_inline(user_id))
 
 # ---------- ОБРАБОТЧИК ПОДТВЕРЖДЕНИЯ ----------
 async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    user_id = query.from_user.id
     
     if query.data == "confirm_yes":
-        # Проверка на спам
-        user_id = query.from_user.id
         can_send, wait_time = can_send_request(user_id)
         if not can_send:
             await query.edit_message_text(
-                f"⏳ Пожалуйста, подождите {wait_time} секунд перед отправкой новой заявки."
+                get_text(user_id, 'wait_spam', seconds=wait_time)
             )
             return CONFIRM
         
         await query.message.delete()
         await query.message.reply_text(
-            "📞 Поделитесь контактом для связи:",
+            get_text(user_id, 'contact_request'),
             reply_markup=contact_keyboard()
         )
         return CONTACT
@@ -559,14 +806,14 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "confirm_edit":
         await query.edit_message_text(
             "✏️ Выберите, что хотите изменить:",
-            reply_markup=edit_select_inline()
+            reply_markup=edit_select_inline(user_id)
         )
         return EDIT_SELECT
     
     elif query.data == "home":
         await query.edit_message_text(
-            "🏠 Вы в главном меню\n\nВыберите категорию техники:",
-            reply_markup=categories_inline()
+            f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
+            reply_markup=categories_inline(user_id)
         )
         return CATEGORY
 
@@ -574,21 +821,22 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    user_id = query.from_user.id
     
     action = query.data
     
     if action == "edit_category":
         await query.edit_message_text(
-            "📱 Выберите категорию техники:",
-            reply_markup=categories_inline()
+            get_text(user_id, 'choose_category'),
+            reply_markup=categories_inline(user_id)
         )
         return CATEGORY
     
     elif action == "edit_budget":
         category = context.user_data.get('category', '📱 Смартфоны')
         await query.edit_message_text(
-            f"💰 Выберите бюджет для {category}:",
-            reply_markup=budget_inline(category)
+            f"💰 {get_text(user_id, 'choose_budget')}",
+            reply_markup=budget_inline(category, user_id)
         )
         return BUDGET
     
@@ -598,15 +846,15 @@ async def handle_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.answer("ℹ️ Для этой категории приоритет не требуется")
             return EDIT_SELECT
         await query.edit_message_text(
-            f"🎯 Выберите приоритет для {category}:",
-            reply_markup=priority_inline(category)
+            get_text(user_id, 'choose_priority'),
+            reply_markup=priority_inline(category, user_id)
         )
         return PRIORITY
     
     elif action == "edit_used":
         await query.edit_message_text(
-            "♻️ Рассматриваете б/у технику?",
-            reply_markup=used_inline()
+            get_text(user_id, 'choose_used'),
+            reply_markup=used_inline(user_id)
         )
         return USED
     
@@ -614,14 +862,14 @@ async def handle_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text(
             "📝 Напишите модели через запятую\n\n"
             "Например: iPhone 17, Galaxy S27",
-            reply_markup=models_inline()
+            reply_markup=models_inline(user_id)
         )
         return MODELS
     
     elif action == "home":
         await query.edit_message_text(
-            "🏠 Вы в главном меню\n\nВыберите категорию техники:",
-            reply_markup=categories_inline()
+            f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
+            reply_markup=categories_inline(user_id)
         )
         return CATEGORY
 
@@ -629,21 +877,22 @@ async def handle_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    user_id = query.from_user.id
     
     action = query.data
     
     if action == "home":
         await query.edit_message_text(
-            "🏠 Вы в главном меню\n\nВыберите категорию техники:",
-            reply_markup=categories_inline()
+            f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
+            reply_markup=categories_inline(user_id)
         )
         return CATEGORY
     
     elif action == "back_to_categories":
         await query.edit_message_text(
             f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
-            "📱 Выберите категорию техники:",
-            reply_markup=categories_inline()
+            f"{get_text(user_id, 'choose_category')}",
+            reply_markup=categories_inline(user_id)
         )
         return CATEGORY
     
@@ -652,8 +901,8 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
             f"✅ Выбрано: {category}\n\n"
-            "💰 Выберите бюджет:",
-            reply_markup=budget_inline(category)
+            f"{get_text(user_id, 'choose_budget')}",
+            reply_markup=budget_inline(category, user_id)
         )
         return BUDGET
     
@@ -663,8 +912,8 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
             f"✅ Категория: {category}\n"
             f"💰 Бюджет: {context.user_data.get('budget')}\n\n"
-            "🎯 Что для вас наиболее важно?",
-            reply_markup=priority_inline(category)
+            f"{get_text(user_id, 'choose_priority')}",
+            reply_markup=priority_inline(category, user_id)
         )
         return PRIORITY
     
@@ -674,13 +923,15 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Категория: {context.user_data.get('category')}\n"
             f"💰 Бюджет: {context.user_data.get('budget')}\n"
             f"🎯 Приоритет: {context.user_data.get('priority')}\n\n"
-            "♻️ Рассматриваете б/у технику?",
-            reply_markup=used_inline()
+            f"{get_text(user_id, 'choose_used')}",
+            reply_markup=used_inline(user_id)
         )
         return USED
 
 # ---------- КОНТАКТ ----------
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    
     if not update.message.contact:
         await update.message.reply_text(
             "⚠️ Пожалуйста, используйте кнопку '📞 Поделиться контактом'",
@@ -689,7 +940,6 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return CONTACT
     
     data = context.user_data
-    user_id = update.message.from_user.id
     
     cursor.execute("""
         INSERT INTO requests(user_id, category, budget, contact, priority, used, models, status)
@@ -712,7 +962,7 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).fetchone()[0]
     
     await update.message.reply_text(
-        f"✅ Заявка #{request_number} принята!\n\n"
+        f"{get_text(user_id, 'request_accepted')}\n\n"
         "🎉 Спасибо за обращение в NoFuss Guide!\n\n"
         "Специалист изучит ваши требования и подберёт наиболее подходящие варианты техники.\n\n"
         "⏱ Обычно ответ занимает от нескольких часов до одного дня.\n\n"
@@ -720,10 +970,9 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=remove_keyboard()
     )
     
-    # Показываем меню после отправки заявки
     await update.message.reply_text(
         "📋 Что хотите сделать дальше?",
-        reply_markup=after_submit_inline()
+        reply_markup=after_submit_inline(user_id)
     )
     
     admin_text = (
@@ -755,6 +1004,7 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    user_id = query.from_user.id
     
     action = query.data
     
@@ -762,13 +1012,12 @@ async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data.clear()
         await query.edit_message_text(
             f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
-            "📱 Выберите категорию техники:",
-            reply_markup=categories_inline()
+            f"{get_text(user_id, 'choose_category')}",
+            reply_markup=categories_inline(user_id)
         )
         return CATEGORY
     
     elif action == "my_requests":
-        user_id = query.from_user.id
         requests = cursor.execute(
             """SELECT id, request_number, category, status, created_at, budget, priority, used, models
             FROM requests WHERE user_id=? 
@@ -780,7 +1029,7 @@ async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.edit_message_text(
                 "📋 У вас пока нет заявок.\n\n"
                 "Нажмите '🆕 Новая заявка' чтобы создать первую!",
-                reply_markup=after_submit_inline()
+                reply_markup=after_submit_inline(user_id)
             )
             return AFTER_SUBMIT
         
@@ -800,22 +1049,257 @@ async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             text,
             parse_mode="Markdown",
-            reply_markup=after_submit_inline()
+            reply_markup=after_submit_inline(user_id)
         )
         return AFTER_SUBMIT
     
     elif action == "home":
         await query.edit_message_text(
-            "🏠 Вы в главном меню\n\nВыберите категорию техники:",
-            reply_markup=categories_inline()
+            f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
+            reply_markup=categories_inline(user_id)
         )
         return CATEGORY
+
+# ---------- СТАТИСТИКА ПОЛЬЗОВАТЕЛЯ ----------
+async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    
+    total = cursor.execute("SELECT COUNT(*) FROM requests WHERE user_id = ?", (user_id,)).fetchone()[0]
+    pending = cursor.execute("SELECT COUNT(*) FROM requests WHERE user_id = ? AND status='pending'", (user_id,)).fetchone()[0]
+    processing = cursor.execute("SELECT COUNT(*) FROM requests WHERE user_id = ? AND status='processing'", (user_id,)).fetchone()[0]
+    completed = cursor.execute("SELECT COUNT(*) FROM requests WHERE user_id = ? AND status='completed'", (user_id,)).fetchone()[0]
+    cancelled = cursor.execute("SELECT COUNT(*) FROM requests WHERE user_id = ? AND status='cancelled'", (user_id,)).fetchone()[0]
+    
+    avg_time = cursor.execute("""
+        SELECT AVG(strftime('%s', confirmed_at) - strftime('%s', created_at)) / 3600.0
+        FROM requests WHERE user_id = ? AND confirmed_at IS NOT NULL
+    """, (user_id,)).fetchone()[0]
+    
+    achievements = []
+    if total >= 1:
+        achievements.append("🆕 Новичок")
+    if total >= 3:
+        achievements.append("🔥 Опытный")
+    if total >= 5:
+        achievements.append("⭐ Эксперт")
+    if total >= 10:
+        achievements.append("👑 Гуру")
+    
+    text = f"📊 **Ваша статистика**\n\n"
+    text += f"📨 Всего заявок: {total}\n"
+    text += f"⏳ В обработке: {pending}\n"
+    text += f"🔄 В работе: {processing}\n"
+    text += f"✅ Выполнено: {completed}\n"
+    text += f"❌ Отменено: {cancelled}\n"
+    if avg_time:
+        text += f"⏱ Среднее время ответа: {avg_time:.1f} ч.\n"
+    text += f"\n🏆 Достижения:\n"
+    if achievements:
+        for ach in achievements:
+            text += f"  • {ach}\n"
+    else:
+        text += "  • Пока нет достижений. Отправьте первую заявку! 🚀\n"
+    
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=remove_keyboard())
+
+# ---------- НАСТРОЙКИ ----------
+async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    await update.message.reply_text(
+        "⚙️ **Настройки**\n\n"
+        "Выберите раздел для настройки:",
+        parse_mode="Markdown",
+        reply_markup=settings_inline(user_id)
+    )
+
+async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    if query.data == "settings_lang":
+        await query.edit_message_text(
+            "🌐 **Выберите язык:**",
+            parse_mode="Markdown",
+            reply_markup=language_select_inline()
+        )
+        return
+    
+    elif query.data == "settings_theme":
+        await query.edit_message_text(
+            "🎨 **Выберите тему:**",
+            parse_mode="Markdown",
+            reply_markup=theme_select_inline()
+        )
+        return
+    
+    elif query.data == "settings":
+        await query.edit_message_text(
+            "⚙️ **Настройки**\n\n"
+            "Выберите раздел для настройки:",
+            parse_mode="Markdown",
+            reply_markup=settings_inline(user_id)
+        )
+        return
+    
+    elif query.data == "home":
+        await query.edit_message_text(
+            f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
+            reply_markup=categories_inline(user_id)
+        )
+        return CATEGORY
+
+async def language_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    lang = query.data.split("_")[1]
+    update_user_lang(user_id, lang)
+    
+    await query.edit_message_text(
+        get_text(user_id, 'language_changed', lang=LANGUAGES.get(lang, lang)),
+        reply_markup=settings_inline(user_id)
+    )
+
+async def theme_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    theme = query.data.split("_")[1]
+    update_user_theme(user_id, theme)
+    
+    await query.edit_message_text(
+        get_text(user_id, 'theme_changed', theme=THEMES.get(theme, theme)),
+        reply_markup=settings_inline(user_id)
+    )
+
+# ---------- ФИДБЕК ----------
+async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    parts = query.data.split("_")
+    request_id = int(parts[1])
+    
+    if parts[2] == "skip":
+        await query.edit_message_text("❌ Спасибо! Вы всегда можете оставить отзыв позже.")
+        return ConversationHandler.END
+    
+    rating = int(parts[2])
+    
+    cursor.execute("""
+        INSERT INTO feedback(request_id, user_id, rating)
+        VALUES(?, ?, ?)
+    """, (request_id, user_id, rating))
+    db.commit()
+    
+    await query.edit_message_text(
+        f"{get_text(user_id, 'feedback_thanks')}\n\n"
+        f"⭐ Ваша оценка: {rating}\n"
+        "Мы учтём ваше мнение! 🙏",
+        parse_mode="Markdown"
+    )
+    return ConversationHandler.END
+
+# ---------- ЗАПРОС ФИДБЕКА ПОСЛЕ ВЫПОЛНЕНИЯ ----------
+async def request_feedback(request_id, user_id):
+    await bot.send_message(
+        user_id,
+        "🎉 Ваша заявка выполнена!\n\n"
+        "Пожалуйста, оцените нашу работу:",
+        reply_markup=feedback_inline(request_id)
+    )
+
+# ---------- СТАТУСЫ ЗАЯВОК ----------
+async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text("⛔ Доступ запрещён")
+        return
+    
+    parts = query.data.split("_")
+    request_id = int(parts[2])
+    new_status = parts[3]
+    
+    status_map = {'processing': '🔄 В работе', 'completed': '✅ Выполнена', 'cancelled': '❌ Отменена'}
+    
+    request_data = cursor.execute("SELECT user_id, request_number FROM requests WHERE id = ?", (request_id,)).fetchone()
+    if not request_data:
+        await query.edit_message_text("❌ Заявка не найдена")
+        return
+    
+    user_id, request_number = request_data
+    
+    cursor.execute("UPDATE requests SET status = ?, confirmed_at = CURRENT_TIMESTAMP WHERE id = ?", (new_status, request_id))
+    db.commit()
+    
+    status_text = status_map.get(new_status, new_status)
+    await query.get_bot().send_message(user_id, f"📢 Статус вашей заявки обновлён!\n\nНовый статус: {status_text}\n\nПо вопросам: @goojifeed")
+    
+    if new_status == "completed":
+        await request_feedback(request_id, user_id)
+    
+    await query.edit_message_text(f"{query.message.text}\n\n✅ Статус обновлён: {status_text}")
+
+# ---------- КОМАНДЫ ----------
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "ℹ️ **О проекте NoFuss Guide**\n\n"
+        "🤖 Бот помогает собрать все требования к технике, "
+        "а конкретный подбор производит специалист.\n\n"
+        "📅 Версия: 2.0\n"
+        "📧 Контакты: @goojifeed\n"
+        "📢 Канал: @NoFussGuide\n\n"
+        "Спасибо, что пользуетесь нашим сервисом! 🙏",
+        parse_mode="Markdown",
+        reply_markup=remove_keyboard()
+    )
+
+async def commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📋 **Список команд**\n\n"
+        "/start - Начать оформление заявки\n"
+        "/stats - Моя статистика\n"
+        "/settings - Настройки\n"
+        "/faq - Частые вопросы\n"
+        "/about - О проекте\n"
+        "/commands - Список команд\n"
+        "/cancel - Отменить действие",
+        parse_mode="Markdown",
+        reply_markup=remove_keyboard()
+    )
+
+async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    await update.message.reply_text(
+        f"{get_text(user_id, 'faq')}\n\n"
+        "• Как быстро отвечаем? — В течение дня\n"
+        "• Подбираете б/у? — Да\n"
+        "• Стоимость? — Обсуждается индивидуально 🤝\n"
+        "• Какие бренды? — Любые достойные варианты\n"
+        "• Как оставить отзыв? — После выполнения заявки появится кнопка",
+        reply_markup=remove_keyboard()
+    )
+
+async def contact_direct(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("💬 Написать напрямую: @goojifeed")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Действие отменено.", reply_markup=remove_keyboard())
     return ConversationHandler.END
 
-# ---------- НОВОСТИ ----------
+async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Используйте кнопки меню 👇",
+        reply_markup=remove_keyboard()
+    )
+
+# ---------- НОВОСТИ (АДМИН) ----------
 async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Только для админа")
@@ -891,7 +1375,7 @@ async def send_post_to_admin(update, context, index):
     else:
         await update.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=keyboard)
 
-# ---------- КОЛБЭКИ НОВОСТЕЙ ----------
+# ---------- КОЛБЭКИ НОВОСТЕЙ (ИСПРАВЛЕННЫЕ) ----------
 async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -901,7 +1385,10 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     posts = data.get('posts', [])
     
     if not posts:
-        await query.edit_message_text("❌ Посты не найдены")
+        if query.message.photo:
+            await query.edit_message_caption(caption="❌ Посты не найдены")
+        else:
+            await query.edit_message_text("❌ Посты не найдены")
         return
     
     action = query.data
@@ -912,7 +1399,10 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         
         channel_id = os.getenv("CHANNEL_ID")
         if not channel_id:
-            await query.edit_message_text("❌ Не указан ID канала")
+            if query.message.photo:
+                await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ Не указан ID канала")
+            else:
+                await query.edit_message_text(f"{query.message.text}\n\n❌ Не указан ID канала")
             return
         
         try:
@@ -920,20 +1410,37 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 await query.get_bot().send_photo(chat_id=channel_id, photo=post['image'], caption=post['text'], parse_mode="Markdown")
             else:
                 await query.get_bot().send_message(chat_id=channel_id, text=post['text'], parse_mode="Markdown", disable_web_page_preview=True)
-            await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ **Пост опубликован!** 🎉", parse_mode="Markdown")
+            
+            if query.message.photo:
+                await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ **Пост опубликован!** 🎉", parse_mode="Markdown")
+            else:
+                await query.edit_message_text(f"{query.message.text}\n\n✅ **Пост опубликован!** 🎉", parse_mode="Markdown")
         except Exception as e:
-            await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ Ошибка: {e}")
+            if query.message.photo:
+                await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ Ошибка: {e}")
+            else:
+                await query.edit_message_text(f"{query.message.text}\n\n❌ Ошибка: {e}")
     
     elif action.startswith('edit_'):
         index = int(action.split('_')[1])
         context.user_data['editing_index'] = index
-        await query.edit_message_caption(caption="✏️ **Редактирование поста**\n\nОтправьте новый текст (Markdown поддерживается)")
+        
+        await query.message.reply_text(
+            "✏️ **Редактирование поста**\n\n"
+            "Отправьте новый текст (Markdown поддерживается)\n\n"
+            "Пример:\n"
+            "**Заголовок**\n"
+            "Текст новости...\n\n"
+            "🔗 [Подробнее](url)\n\n"
+            "— *NoFuss Guide*"
+        )
         return
     
     elif action.startswith('prev_'):
         current_index = max(0, int(action.split('_')[1]) - 1)
         data['current_index'] = current_index
         pending_posts[user_id] = data
+        
         await query.message.delete()
         await send_post_to_admin_by_query(query, current_index)
     
@@ -941,16 +1448,17 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         current_index = min(len(posts) - 1, int(action.split('_')[1]) + 1)
         data['current_index'] = current_index
         pending_posts[user_id] = data
+        
         await query.message.delete()
         await send_post_to_admin_by_query(query, current_index)
     
     elif action == 'refresh_news':
-        await query.edit_message_caption(caption="🔄 Обновляю...")
+        await query.message.delete()
         new_update = Update(update_id=update.update_id, message=query.message)
         await news_now(new_update, context)
     
     elif action == 'close_news':
-        await query.edit_message_caption(caption="❌ Закрыто")
+        await query.message.delete()
         pending_posts.pop(user_id, None)
 
 async def send_post_to_admin_by_query(query, index):
@@ -1083,36 +1591,7 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(document=f, filename=filename)
     os.remove(filename)
 
-# ---------- СТАТУСЫ ЗАЯВОК ----------
-async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.from_user.id != ADMIN_ID:
-        await query.edit_message_text("⛔ Доступ запрещён")
-        return
-    
-    parts = query.data.split("_")
-    request_id = int(parts[2])
-    new_status = parts[3]
-    
-    status_map = {'processing': '🔄 В работе', 'completed': '✅ Выполнена', 'cancelled': '❌ Отменена'}
-    
-    request_data = cursor.execute("SELECT user_id, request_number FROM requests WHERE id = ?", (request_id,)).fetchone()
-    if not request_data:
-        await query.edit_message_text("❌ Заявка не найдена")
-        return
-    
-    user_id, request_number = request_data
-    
-    cursor.execute("UPDATE requests SET status = ? WHERE id = ?", (new_status, request_id))
-    db.commit()
-    
-    status_text = status_map.get(new_status, new_status)
-    await query.get_bot().send_message(user_id, f"📢 Статус вашей заявки обновлён!\n\nНовый статус: {status_text}\n\nПо вопросам: @goojifeed")
-    
-    await query.edit_message_text(f"{query.message.text}\n\n✅ Статус обновлён: {status_text}")
-
+# ---------- ЧАТ С АДМИНОМ ----------
 async def handle_request_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1156,24 +1635,6 @@ async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
-async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "❓ Частые вопросы\n\n"
-        "• Как быстро отвечаем? — В течение дня\n"
-        "• Подбираете б/у? — Да\n"
-        "• Стоимость? — Обсуждается индивидуально 🤝\n"
-        "• Какие бренды? — Любые достойные варианты"
-    )
-
-async def contact_direct(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("💬 Написать напрямую: @goojifeed")
-
-async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Используйте кнопки меню 👇",
-        reply_markup=remove_keyboard()
-    )
-
 # ---------- ЗАПУСК ----------
 async def main():
     app = Application.builder().token(TOKEN).build()
@@ -1215,6 +1676,9 @@ async def main():
             AFTER_SUBMIT: [
                 CallbackQueryHandler(handle_after_submit, pattern="^(new_request|my_requests|home)$")
             ],
+            FEEDBACK: [
+                CallbackQueryHandler(handle_feedback, pattern="^feedback_")
+            ],
             EDITING_POST: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_post),
                 CommandHandler('cancel', cancel)
@@ -1227,13 +1691,24 @@ async def main():
     app.add_handler(CommandHandler('news_now', news_now))
     app.add_handler(CommandHandler('admin', admin))
     app.add_handler(CommandHandler('export', export_data))
+    app.add_handler(CommandHandler('stats', my_stats))
+    app.add_handler(CommandHandler('settings', settings))
+    app.add_handler(CommandHandler('about', about))
+    app.add_handler(CommandHandler('commands', commands_list))
+    app.add_handler(CommandHandler('faq', faq))
     app.add_handler(CallbackQueryHandler(handle_post_callback, pattern="^(publish|edit|prev|next|refresh_news|close_news)"))
     app.add_handler(CallbackQueryHandler(handle_request_status, pattern="^request_status_"))
     app.add_handler(CallbackQueryHandler(handle_request_chat, pattern="^request_chat_"))
     app.add_handler(CallbackQueryHandler(admin_recent, pattern="^admin_recent$"))
     app.add_handler(CallbackQueryHandler(admin_recent_refresh, pattern="^admin_recent_refresh$"))
     app.add_handler(CallbackQueryHandler(admin_back, pattern="^admin_back$"))
+    app.add_handler(CallbackQueryHandler(settings_callback, pattern="^(settings_lang|settings_theme|settings|home)$"))
+    app.add_handler(CallbackQueryHandler(language_select, pattern="^lang_"))
+    app.add_handler(CallbackQueryHandler(theme_select, pattern="^theme_"))
     app.add_handler(MessageHandler(filters.Regex('❓ FAQ'), faq))
+    app.add_handler(MessageHandler(filters.Regex('⚙️ Настройки'), settings))
+    app.add_handler(MessageHandler(filters.Regex('📊 Моя статистика'), my_stats))
+    app.add_handler(MessageHandler(filters.Regex('ℹ️ О проекте'), about))
     app.add_handler(MessageHandler(filters.Regex('💬 Связаться'), contact_direct))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
     
