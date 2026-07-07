@@ -69,7 +69,7 @@ def contact_keyboard():
         [KeyboardButton("📞 Поделиться контактом", request_contact=True)]
     ], resize_keyboard=True, one_time_keyboard=True)
 
-# ---------- НОВОСТИ (35+ ИСТОЧНИКОВ) ----------
+# ---------- НОВОСТИ ----------
 TECH_RSS_FEEDS = {
     "The Verge": "https://www.theverge.com/rss/index.xml",
     "TechCrunch": "https://techcrunch.com/feed/",
@@ -115,7 +115,6 @@ TECH_RSS_FEEDS = {
     "HP Blog": "https://www.hp.com/us-en/feed/",
 }
 
-# Хранилище для сгенерированных постов
 pending_posts = {}
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
@@ -170,15 +169,12 @@ def get_news_image(query):
         return None
 
 def format_paragraph(text, width=60):
-    """Форматирует текст с выравниванием по ширине"""
     if not text:
         return ""
-    # Разбиваем на абзацы
     paragraphs = text.split('\n')
     formatted = []
     for p in paragraphs:
         if p.strip():
-            # Разбиваем на строки по ширине
             lines = textwrap.wrap(p, width=width)
             formatted.append('\n'.join(lines))
         else:
@@ -227,16 +223,13 @@ def parse_rss(url):
         return []
 
 def generate_post(article, index, total, source_name):
-    """Генерирует красивый пост для одной новости"""
     title = article.get('title', '')
     description = article.get('description', '')
     link = article.get('link', '')
     
-    # Переводим на русский
     title_ru = translate_text(title)
     desc_ru = translate_text(description) if description else ''
     
-    # Генерируем рассуждение
     reflections = [
         "А как вы относитесь к таким изменениям? Делитесь мнением в комментариях! 💬",
         "Что думаете по этому поводу? Расскажите нам! 🤔",
@@ -246,11 +239,9 @@ def generate_post(article, index, total, source_name):
     ]
     reflection = random.choice(reflections)
     
-    # Форматируем текст с выравниванием
     formatted_title = format_paragraph(title_ru, width=50)
     formatted_desc = format_paragraph(desc_ru, width=50) if desc_ru else ''
     
-    # Формируем пост с абзацами
     post = f"🔹 **{formatted_title}**\n\n"
     
     if formatted_desc:
@@ -262,7 +253,6 @@ def generate_post(article, index, total, source_name):
     post += f"— *NoFuss Guide*\n\n"
     post += f"💭 {reflection}"
     
-    # Ищем изображение
     image_url = get_news_image(title_ru)
     
     return {
@@ -353,7 +343,6 @@ async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ))
     db.commit()
     
-    # Получаем ID заявки
     request_id = cursor.lastrowid
     
     await update.message.reply_text(
@@ -362,7 +351,6 @@ async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu()
     )
     
-    # Отправляем админу с кнопками управления
     admin_text = (
         f"🔥 **Новая заявка!**\n\n"
         f"📋 № заявки: {request_id}\n"
@@ -401,7 +389,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Действие отменено.", reply_markup=main_menu())
     return ConversationHandler.END
 
-# ---------- ОБРАБОТЧИКИ СТАТУСОВ ЗАЯВОК ----------
+# ---------- ОБРАБОТЧИКИ СТАТУСОВ ----------
 async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -420,7 +408,6 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
         'cancelled': '❌ Отменена'
     }
     
-    # Получаем данные заявки
     request_data = cursor.execute(
         "SELECT user_id, contact FROM requests WHERE id = ?", (request_id,)
     ).fetchone()
@@ -431,14 +418,12 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
     
     user_id, contact = request_data
     
-    # Обновляем статус
     cursor.execute(
         "UPDATE requests SET status = ? WHERE id = ?",
         (new_status, request_id)
     )
     db.commit()
     
-    # Отправляем уведомление пользователю
     status_text = status_map.get(new_status, new_status)
     await query.get_bot().send_message(
         user_id,
@@ -480,7 +465,6 @@ async def handle_request_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
         "Для отмены отправьте /cancel"
     )
     
-    # Устанавливаем состояние для чата
     return EDITING_POST
 
 async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -597,7 +581,7 @@ async def send_post_to_admin(update, context, index):
             reply_markup=keyboard
         )
 
-# ---------- КОЛБЭКИ ----------
+# ---------- КОЛБЭКИ НОВОСТЕЙ ----------
 async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -618,9 +602,7 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         
         channel_id = os.getenv("CHANNEL_ID")
         if not channel_id:
-            await query.edit_message_text(
-                "❌ Не указан ID канала. Добавьте CHANNEL_ID"
-            )
+            await query.edit_message_text("❌ Не указан ID канала")
             return
         
         try:
