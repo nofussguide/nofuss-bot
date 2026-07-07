@@ -183,14 +183,12 @@ def models_inline():
     ])
 
 def confirm_inline():
-    """Клавиатура для подтверждения заявки"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Подтвердить заявку", callback_data="confirm_yes")],
         [InlineKeyboardButton("✏️ Редактировать данные", callback_data="confirm_edit")]
     ])
 
 def edit_select_inline():
-    """Клавиатура для выбора поля для редактирования"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📂 Категория", callback_data="edit_category")],
         [InlineKeyboardButton("💰 Бюджет", callback_data="edit_budget")],
@@ -487,7 +485,7 @@ async def handle_models(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Например: iPhone 17, Galaxy S27, Xiaomi 15"
         )
         return MODELS
-    else:  # models_skip
+    else:
         context.user_data['models'] = "Не указано"
         await show_confirm(query, context)
         return CONFIRM
@@ -498,7 +496,6 @@ async def models_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CONFIRM
 
 async def show_confirm(update_or_query, context):
-    """Показывает экран подтверждения с двумя кнопками"""
     data = context.user_data
     
     text = (
@@ -524,14 +521,14 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     if query.data == "confirm_yes":
-        await query.edit_message_text(
+        await query.message.delete()
+        await query.message.reply_text(
             "📞 Поделитесь контактом для связи:",
             reply_markup=contact_keyboard()
         )
         return CONTACT
     
     elif query.data == "confirm_edit":
-        # Показываем выбор поля для редактирования
         await query.edit_message_text(
             "✏️ Выберите, что хотите изменить:",
             reply_markup=edit_select_inline()
