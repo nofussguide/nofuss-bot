@@ -243,7 +243,7 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Используйте кнопки меню 👇", reply_markup=main_menu())
 
 # ---------- ЗАПУСК ----------
-def main():
+async def main():
     app = Application.builder().token(TOKEN).build()
     
     conv_handler = ConversationHandler(
@@ -267,7 +267,14 @@ def main():
     app.add_handler(MessageHandler(filters.Regex('💬 Связаться'), contact_direct))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
     
-    app.run_polling()
+    # Запускаем бота правильно для Python 3.14
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    
+    # Бесконечное ожидание
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
