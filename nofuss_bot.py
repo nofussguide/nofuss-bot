@@ -2071,13 +2071,6 @@ async def scheduled_news_check():
 
 
 # ---------- FALLBACK ----------
-@dp.message()
-async def fallback(message: Message):
-    await message.answer(
-        "Пожалуйста, используйте кнопки меню для взаимодействия с ботом 👇",
-        reply_markup=main_menu_inline()
-    )
-
 
 @dp.callback_query()
 async def fallback_callback(callback: CallbackQuery):
