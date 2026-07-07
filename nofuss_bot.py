@@ -13,15 +13,18 @@ from aiohttp import web
 import logging
 from typing import List, Dict
 import html
+import random
 
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
+# Для перевода
+from googletrans import Translator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
+
+translator = Translator()
 
 # ---------- БАЗА ДАННЫХ ----------
 db = sqlite3.connect("nofuss.db", check_same_thread=False)
@@ -72,26 +75,36 @@ TECH_RSS_FEEDS = {
     "Apple Newsroom": "https://www.apple.com/newsroom/rss-feed.rss",
     "Google Blog": "https://blog.google/rss/",
     "Xiaomi Blog": "https://blog.mi.com/en/feed/",
-    "Samsung Newsroom": "https://news.samsung.com/global/feed",
-    "Tom's Hardware": "https://www.tomshardware.com/feeds/all",
 }
 
 # Хранилище для сгенерированных постов
 pending_posts = {}
 
 def clean_html(text):
-    """Очищает HTML-теги из текста"""
     if not text:
         return ""
     text = re.sub(r'<[^>]+>', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
+def translate_text(text):
+    """Переводит текст на русский"""
+    try:
+        if not text or len(text) < 3:
+            return text
+        # Пропускаем если уже есть русские буквы
+        if re.search(r'[а-яА-Я]', text):
+            return text
+        translated = translator.translate(text, dest='ru')
+        return translated.text
+    except Exception as e:
+        logger.error(f"Translation error: {e}")
+        return text
+
 def parse_rss(url):
-    """Парсит RSS и возвращает список новостей"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, timeout=10, headers=headers)
+        response = requests.get(url, timeout=15, headers=headers)
         response.raise_for_status()
         root = ET.fromstring(response.content)
         channel = root.find('channel')
@@ -99,7 +112,7 @@ def parse_rss(url):
             return []
         
         items = []
-        for item in channel.findall('item')[:5]:
+        for item in channel.findall('item')[:3]:
             title = item.find('title')
             title_text = title.text if title is not None else ''
             
@@ -116,7 +129,7 @@ def parse_rss(url):
             if title_text and link_text:
                 items.append({
                     'title': title_text.strip(),
-                    'description': desc_text[:300],
+                    'description': desc_text[:500],
                     'link': link_text,
                     'published': pub_date_text,
                     'source': url
@@ -126,80 +139,32 @@ def parse_rss(url):
         logger.error(f"RSS error {url}: {e}")
         return []
 
-def generate_news_post(articles, source_name):
-    """Генерирует готовый пост для публикации"""
-    if not articles:
-        return None
+def generate_single_post(article, index, total):
+    """Генерирует красивый пост для одной новости"""
+    # Переводим заголовок и описание
+    title_ru = translate_text(article['title'])
+    desc_ru = translate_text(article['description']) if article['description'] else ''
     
-    # Выбираем 3-5 главных новостей
-    selected = articles[:5]
+    # Формируем пост
+    post = f"📰 **Новость {index + 1} из {total}**\n\n"
+    post += f"**{title_ru}**\n\n"
     
-    # Формируем текст поста
-    post = f"📰 **Дайджест новостей от {source_name}**\n\n"
+    if desc_ru:
+        post += f"{desc_ru}\n\n"
+    
+    post += f"🔗 [Читать подробнее]({article['link']})\n\n"
+    post += f"📌 Источник: {article['source']}\n"
     post += f"📅 {datetime.now().strftime('%d.%m.%Y')}\n\n"
-    
-    for i, article in enumerate(selected, 1):
-        title = article['title']
-        desc = article['description'][:200] + '...' if article['description'] else ''
-        
-        post += f"**{i}. {title}**\n"
-        if desc:
-            post += f"{desc}\n"
-        post += f"🔗 [Читать подробнее]({article['link']})\n\n"
-    
-    post += "➡️ **Хотите быть в курсе всех новостей?**\n"
-    post += "Подписывайтесь на наш канал @NoFussGuide!\n\n"
-    post += "#новости #технологии #дайджест"
-    
-    return post
-
-def generate_daily_post():
-    """Генерирует полезный пост на день"""
-    tips = [
-        "**Как продлить жизнь смартфону:**\n"
-        "• Заряжайте от 20% до 80%\n"
-        "• Используйте оригинальные зарядки\n"
-        "• Не перегревайте устройство\n"
-        "• Регулярно очищайте память\n"
-        "• Обновляйте ПО вовремя\n\n"
-        "Следуйте этим советам — и ваш смартфон прослужит дольше! 💪",
-        
-        "**Как выбрать идеальный ноутбук:**\n"
-        "• Для работы: Intel Core i5/i7, 16GB RAM, SSD 512GB\n"
-        "• Для учёбы: Intel Core i3/i5, 8GB RAM, SSD 256GB\n"
-        "• Для игр: Intel Core i7, 32GB RAM, RTX 4060+\n"
-        "• Для дизайна: MacBook Pro или NVIDIA Studio\n\n"
-        "Главное — не переплачивайте за то, что не нужно! 💡",
-        
-        "**Как не обмануться при покупке техники:**\n"
-        "• Проверяйте оригинальную упаковку\n"
-        "• Сверяйте серийный номер на сайте производителя\n"
-        "• Не покупайте с рук без гарантии\n"
-        "• Сравнивайте цены в нескольких магазинах\n"
-        "• Читайте отзывы реальных покупателей\n\n"
-        "Будьте внимательны и не дайте себя обмануть! 🛡️",
-        
-        "**Важные характеристики смартфона:**\n"
-        "• Процессор: Snapdragon 8+ Gen 1 или новее\n"
-        "• Память: от 8GB RAM + 256GB ROM\n"
-        "• Камера: 50MP+ с оптической стабилизацией\n"
-        "• Аккумулятор: 5000mAh + быстрая зарядка\n"
-        "• Экран: AMOLED 120Hz\n\n"
-        "На эти параметры стоит обращать внимание в первую очередь! 📱"
-    ]
-    
-    # Выбираем совет по дню
-    tip_index = datetime.now().day % len(tips)
-    tip = tips[tip_index]
-    
-    post = "📚 **Полезный совет дня**\n\n"
-    post += tip
-    post += "\n\n#советы #полезное #техника"
+    post += "➡️ **Хотите быть в курсе?**\n"
+    post += "Подписывайтесь на @NoFussGuide!\n\n"
+    post += "#новости #технологии #обзор"
     
     return post
 
 # ---------- ОБРАБОТЧИКИ ЗАЯВОК ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Очищаем состояние
+    context.user_data.clear()
     await update.message.reply_text(
         "👋 Добро пожаловать в NoFuss Guide!\n\n"
         "Я помогу подобрать технику под ваш бюджет и задачи.\n\n"
@@ -283,9 +248,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Действие отменено.", reply_markup=main_menu())
     return ConversationHandler.END
 
-async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Используйте кнопки меню 👇", reply_markup=main_menu())
-
 # ---------- НОВОСТИ ----------
 async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
@@ -310,37 +272,33 @@ async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text("❌ Новостей не найдено")
         return
     
-    # Генерируем посты
-    posts = []
+    # Перемешиваем и берем топ-5
+    random.shuffle(all_news)
+    selected_news = all_news[:5]
     
-    # Основной новостной дайджест
-    news_post = generate_news_post(all_news, "NoFuss Guide")
-    if news_post:
+    # Генерируем посты для каждой новости
+    posts = []
+    for i, article in enumerate(selected_news):
+        post_content = generate_single_post(article, i, len(selected_news))
         posts.append({
             'type': 'news',
-            'content': news_post,
-            'title': '📰 Дайджест новостей'
+            'content': post_content,
+            'title': f"Новость {i+1}",
+            'article': article
         })
     
-    # Полезный совет дня
-    daily_post = generate_daily_post()
-    posts.append({
-        'type': 'tip',
-        'content': daily_post,
-        'title': '📚 Полезный совет дня'
-    })
-    
-    # Сохраняем посты для редактирования
+    # Сохраняем посты
     user_id = update.message.from_user.id
     pending_posts[user_id] = {
         'posts': posts,
         'current_index': 0,
-        'all_news': all_news
+        'all_news': selected_news
     }
+    
+    await status_msg.edit_text("✅ Новости собраны! Отправляю посты...")
     
     # Отправляем первый пост
     await send_post_to_admin(update, context, 0)
-    await status_msg.edit_text("✅ Посты сгенерированы! Редактируйте и публикуйте.")
 
 async def send_post_to_admin(update, context, index):
     user_id = update.message.from_user.id
@@ -367,7 +325,7 @@ async def send_post_to_admin(update, context, index):
             InlineKeyboardButton("Вперед ▶️", callback_data=f"next_{index}")
         ],
         [
-            InlineKeyboardButton("🔄 Обновить новости", callback_data="refresh_news"),
+            InlineKeyboardButton("🔄 Обновить", callback_data="refresh_news"),
             InlineKeyboardButton("❌ Закрыть", callback_data="close_news")
         ]
     ])
@@ -379,7 +337,7 @@ async def send_post_to_admin(update, context, index):
         reply_markup=keyboard
     )
 
-# ---------- КОЛБЭКИ ДЛЯ ПОСТОВ ----------
+# ---------- КОЛБЭКИ ----------
 async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -414,11 +372,11 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 disable_web_page_preview=True
             )
             await query.edit_message_text(
-                f"{query.message.text}\n\n✅ **Пост успешно опубликован!** 🎉",
+                f"{query.message.text}\n\n✅ **Пост опубликован!** 🎉",
                 parse_mode="Markdown"
             )
         except Exception as e:
-            await query.edit_message_text(f"❌ Ошибка публикации: {e}")
+            await query.edit_message_text(f"❌ Ошибка: {e}")
     
     elif action.startswith('edit_'):
         index = int(action.split('_')[1])
@@ -428,13 +386,15 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             f"✏️ **Редактирование поста {index + 1}**\n\n"
             "Отправьте новый текст поста (Markdown поддерживается):"
         )
-        return EDITING_POST
+        return
     
     elif action.startswith('prev_'):
         current_index = max(0, int(action.split('_')[1]) - 1)
         data['current_index'] = current_index
         pending_posts[user_id] = data
         
+        # Отправляем новое сообщение вместо редактирования
+        await query.message.delete()
         await send_post_to_admin_by_query(query, current_index)
     
     elif action.startswith('next_'):
@@ -442,11 +402,17 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         data['current_index'] = current_index
         pending_posts[user_id] = data
         
+        await query.message.delete()
         await send_post_to_admin_by_query(query, current_index)
     
     elif action == 'refresh_news':
-        await query.edit_message_text("🔄 Обновляю новости...")
-        await news_now(update, context)
+        await query.edit_message_text("🔄 Обновляю...")
+        # Создаем новое сообщение как update
+        new_update = Update(
+            update_id=update.update_id,
+            message=query.message
+        )
+        await news_now(new_update, context)
     
     elif action == 'close_news':
         await query.edit_message_text("❌ Закрыто")
@@ -458,7 +424,7 @@ async def send_post_to_admin_by_query(query, index):
     posts = data.get('posts', [])
     
     if not posts or index >= len(posts):
-        await query.edit_message_text("❌ Пост не найден")
+        await query.message.reply_text("❌ Пост не найден")
         return
     
     post = posts[index]
@@ -477,12 +443,12 @@ async def send_post_to_admin_by_query(query, index):
             InlineKeyboardButton("Вперед ▶️", callback_data=f"next_{index}")
         ],
         [
-            InlineKeyboardButton("🔄 Обновить новости", callback_data="refresh_news"),
+            InlineKeyboardButton("🔄 Обновить", callback_data="refresh_news"),
             InlineKeyboardButton("❌ Закрыть", callback_data="close_news")
         ]
     ])
     
-    await query.edit_message_text(
+    await query.message.reply_text(
         text,
         parse_mode="Markdown",
         disable_web_page_preview=True,
@@ -499,17 +465,11 @@ async def handle_edit_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Пост не найден")
         return
     
-    # Обновляем пост
     posts[editing_index]['content'] = update.message.text
     pending_posts[user_id] = data
     
     await update.message.reply_text("✅ Пост обновлён!")
-    
-    # Показываем обновлённый пост
     await send_post_to_admin(update, context, editing_index)
-
-async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Используйте кнопки меню 👇", reply_markup=main_menu())
 
 # ---------- АДМИН ----------
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -543,11 +503,16 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def contact_direct(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("💬 Написать напрямую: @goojifeed")
 
+async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Используйте кнопки меню 👇", reply_markup=main_menu())
+
+async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Используйте кнопки меню 👇", reply_markup=main_menu())
+
 # ---------- ЗАПУСК ----------
 async def main():
     app = Application.builder().token(TOKEN).build()
     
-    # ConversationHandler для заявок
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
