@@ -55,6 +55,20 @@ CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, EDITING_POST = range(7)
 
 CATEGORIES = ["📱 Смартфоны", "💻 Ноутбуки", "📺 Телевизоры", "📲 Планшеты", "⌚ Носимая электроника", "🔧 Другое"]
 
+BUDGET_OPTIONS = [
+    "До 20 000 ₽", "20 000 - 50 000 ₽", "50 000 - 100 000 ₽",
+    "100 000 - 200 000 ₽", "Более 200 000 ₽", "Не знаю"
+]
+
+PRIORITY_OPTIONS = [
+    "Производительность", "Камера", "Автономность",
+    "Дизайн", "Цена", "Универсальность"
+]
+
+USED_OPTIONS = ["Да", "Нет", "Не принципиально"]
+
+MODELS_OPTIONS = ["Пропустить", "Указать модели"]
+
 # ---------- КЛАВИАТУРЫ ----------
 def main_menu():
     return ReplyKeyboardMarkup([
@@ -68,6 +82,58 @@ def contact_keyboard():
     return ReplyKeyboardMarkup([
         [KeyboardButton("📞 Поделиться контактом", request_contact=True)]
     ], resize_keyboard=True, one_time_keyboard=True)
+
+def remove_keyboard():
+    return ReplyKeyboardMarkup([[]], resize_keyboard=True)
+
+# ---------- ИНЛАЙН-КЛАВИАТУРЫ ----------
+def categories_inline():
+    buttons = []
+    row = []
+    for i, cat in enumerate(CATEGORIES):
+        row.append(InlineKeyboardButton(cat, callback_data=f"cat_{i}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(buttons)
+
+def budget_inline():
+    buttons = []
+    row = []
+    for i, opt in enumerate(BUDGET_OPTIONS):
+        row.append(InlineKeyboardButton(opt, callback_data=f"budget_{i}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(buttons)
+
+def priority_inline():
+    buttons = []
+    row = []
+    for i, opt in enumerate(PRIORITY_OPTIONS):
+        row.append(InlineKeyboardButton(opt, callback_data=f"priority_{i}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(buttons)
+
+def used_inline():
+    buttons = []
+    for i, opt in enumerate(USED_OPTIONS):
+        buttons.append([InlineKeyboardButton(opt, callback_data=f"used_{i}")])
+    return InlineKeyboardMarkup(buttons)
+
+def models_inline():
+    buttons = []
+    for i, opt in enumerate(MODELS_OPTIONS):
+        buttons.append([InlineKeyboardButton(opt, callback_data=f"models_{i}")])
+    return InlineKeyboardMarkup(buttons)
 
 # ---------- НОВОСТИ ----------
 TECH_RSS_FEEDS = {
@@ -267,57 +333,102 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Добро пожаловать в NoFuss Guide!\n\n"
         "Я помогу подобрать технику под ваш бюджет и задачи.\n\n"
         "Выберите категорию:",
-        reply_markup=main_menu()
+        reply_markup=remove_keyboard()
+    )
+    
+    await update.message.reply_text(
+        "📱 Выберите категорию техники:",
+        reply_markup=categories_inline()
     )
     return CATEGORY
 
-async def category(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text not in CATEGORIES:
-        await update.message.reply_text("Используйте кнопки меню 👇", reply_markup=main_menu())
-        return CATEGORY
+# ---------- ОБРАБОТЧИКИ КОЛБЭКОВ ----------
+async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     
-    context.user_data['category'] = text
-    await update.message.reply_text(
-        "💰 Введите ваш бюджет (например: 50000 руб, 700$ или просто цифру):",
-        reply_markup=main_menu()
+    category = CATEGORIES[int(query.data.split("_")[1])]
+    context.user_data['category'] = category
+    
+    await query.edit_message_text(
+        f"✅ Выбрано: {category}\n\n"
+        "💰 Выберите бюджет:",
+        reply_markup=budget_inline()
     )
     return BUDGET
 
-async def budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['budget'] = update.message.text
-    await update.message.reply_text(
-        "🎯 Что для вас важнее всего?\n"
-        "Напишите одним словом или предложением:\n"
-        "Например: производительность, камера, автономность, дизайн",
-        reply_markup=main_menu()
+async def handle_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    budget = BUDGET_OPTIONS[int(query.data.split("_")[1])]
+    context.user_data['budget'] = budget
+    
+    await query.edit_message_text(
+        f"✅ Бюджет: {budget}\n\n"
+        "🎯 Что для вас важнее всего?",
+        reply_markup=priority_inline()
     )
     return PRIORITY
 
-async def priority(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['priority'] = update.message.text
-    await update.message.reply_text(
-        "♻️ Рассматриваете б/у технику?\n"
-        "Ответьте Да / Нет / Не принципиально",
-        reply_markup=main_menu()
+async def handle_priority(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    priority = PRIORITY_OPTIONS[int(query.data.split("_")[1])]
+    context.user_data['priority'] = priority
+    
+    await query.edit_message_text(
+        f"✅ Приоритет: {priority}\n\n"
+        "♻️ Рассматриваете б/у технику?",
+        reply_markup=used_inline()
     )
     return USED
 
-async def used(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['used'] = update.message.text
-    await update.message.reply_text(
-        "📝 Напишите модели, которые уже рассматриваете (или пропустите, отправив 'Нет'):"
+async def handle_used(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    used = USED_OPTIONS[int(query.data.split("_")[1])]
+    context.user_data['used'] = used
+    
+    await query.edit_message_text(
+        f"✅ Б/У: {used}\n\n"
+        "📝 Хотите указать модели?",
+        reply_markup=models_inline()
     )
     return MODELS
 
-async def models(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_models(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    choice = MODELS_OPTIONS[int(query.data.split("_")[1])]
+    
+    if choice == "Пропустить":
+        context.user_data['models'] = "Не указано"
+        await query.edit_message_text(
+            "✅ Отлично! Теперь поделитесь контактом:",
+            reply_markup=contact_keyboard()
+        )
+        return CONTACT
+    else:
+        await query.edit_message_text(
+            "📝 Напишите модели через запятую\n"
+            "Например: iPhone 15, Galaxy S24, Xiaomi 14"
+        )
+        return MODELS
+
+# ---------- ОБРАБОТЧИК ТЕКСТА ДЛЯ МОДЕЛЕЙ ----------
+async def models_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['models'] = update.message.text
     await update.message.reply_text(
-        "📞 Поделитесь контактом для связи:",
+        "✅ Отлично! Теперь поделитесь контактом:",
         reply_markup=contact_keyboard()
     )
     return CONTACT
 
+# ---------- ОБРАБОТЧИК КОНТАКТА ----------
 async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.contact:
         await update.message.reply_text(
@@ -383,10 +494,6 @@ async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard
     )
     
-    return ConversationHandler.END
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Действие отменено.", reply_markup=main_menu())
     return ConversationHandler.END
 
 # ---------- ОБРАБОТЧИКИ СТАТУСОВ ----------
@@ -758,6 +865,10 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def contact_direct(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("💬 Написать напрямую: @goojifeed")
 
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Действие отменено.", reply_markup=main_menu())
+    return ConversationHandler.END
+
 async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Используйте кнопки меню 👇", reply_markup=main_menu())
 
@@ -768,11 +879,14 @@ async def main():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, category)],
-            BUDGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, budget)],
-            PRIORITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, priority)],
-            USED: [MessageHandler(filters.TEXT & ~filters.COMMAND, used)],
-            MODELS: [MessageHandler(filters.TEXT & ~filters.COMMAND, models)],
+            CATEGORY: [CallbackQueryHandler(handle_category, pattern="^cat_")],
+            BUDGET: [CallbackQueryHandler(handle_budget, pattern="^budget_")],
+            PRIORITY: [CallbackQueryHandler(handle_priority, pattern="^priority_")],
+            USED: [CallbackQueryHandler(handle_used, pattern="^used_")],
+            MODELS: [
+                CallbackQueryHandler(handle_models, pattern="^models_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, models_text)
+            ],
             CONTACT: [MessageHandler(filters.CONTACT, contact)],
             EDITING_POST: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_post)],
         },
