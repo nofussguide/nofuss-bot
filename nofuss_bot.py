@@ -76,7 +76,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
 # ---------- СОСТОЯНИЯ ----------
-CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDITING_POST = range(8)
+CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING_POST = range(9)
 
 # ---------- ДАННЫЕ ДЛЯ КРИТЕРИЕВ ----------
 CATEGORIES = ["📱 Смартфоны", "💻 Ноутбуки", "📺 Телевизоры", "📲 Планшеты", "⌚ Носимая электроника", "🔧 Другое"]
@@ -183,20 +183,21 @@ def models_inline():
     ])
 
 def confirm_inline():
+    """Клавиатура для подтверждения заявки"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Подтвердить заявку", callback_data="confirm_yes")],
-        [
-            InlineKeyboardButton("📂 Категория", callback_data="edit_category"),
-            InlineKeyboardButton("💰 Бюджет", callback_data="edit_budget")
-        ],
-        [
-            InlineKeyboardButton("🎯 Приоритет", callback_data="edit_priority"),
-            InlineKeyboardButton("♻️ Б/У", callback_data="edit_used")
-        ],
-        [
-            InlineKeyboardButton("📝 Модели", callback_data="edit_models"),
-            InlineKeyboardButton("🏠 Главное меню", callback_data="home")
-        ]
+        [InlineKeyboardButton("✏️ Редактировать данные", callback_data="confirm_edit")]
+    ])
+
+def edit_select_inline():
+    """Клавиатура для выбора поля для редактирования"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📂 Категория", callback_data="edit_category")],
+        [InlineKeyboardButton("💰 Бюджет", callback_data="edit_budget")],
+        [InlineKeyboardButton("🎯 Приоритет", callback_data="edit_priority")],
+        [InlineKeyboardButton("♻️ Б/У", callback_data="edit_used")],
+        [InlineKeyboardButton("📝 Модели", callback_data="edit_models")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="home")]
     ])
 
 def contact_keyboard():
@@ -385,8 +386,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         "👋 Добро пожаловать в NoFuss Guide!\n\n"
-        "🔍 Этот бот помогает подобрать технику под ваш бюджет и задачи.\n\n"
-        "Выберите категорию техники:",
+        "🔍 Бот помогает собрать все требования к технике, "
+        "а конкретный подбор уже производит специалист, которому можно будет "
+        "написать лично для уточнения деталей.\n\n"
+        "📱 Выберите категорию техники:",
         reply_markup=remove_keyboard()
     )
     
@@ -420,23 +423,11 @@ async def handle_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
     budget = BUDGETS.get(category, [])[int(query.data.split("_")[1])]
     context.user_data['budget'] = budget
     
-    # Проверяем, нужен ли приоритет
     if category in NO_PRIORITY_CATEGORIES:
         context.user_data['priority'] = "Не требуется"
         context.user_data['used'] = "Не требуется"
         context.user_data['models'] = "Не указано"
-        
-        await query.edit_message_text(
-            f"{get_progress_bar(6)} {get_step_text(6)}\n\n"
-            "📋 Проверьте данные перед отправкой:\n\n"
-            f"📂 Категория: {category}\n"
-            f"💰 Бюджет: {budget}\n"
-            f"🎯 Приоритет: Не требуется\n"
-            f"♻️ Б/У: Не требуется\n"
-            f"📝 Модели: Не указано\n\n"
-            "✅ Всё верно?",
-            reply_markup=confirm_inline()
-        )
+        await show_confirm(query, context)
         return CONFIRM
     
     await query.edit_message_text(
@@ -491,6 +482,7 @@ async def handle_models(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if query.data == "models_specify":
         await query.edit_message_text(
+            f"{get_progress_bar(5)} {get_step_text(5)}\n\n"
             "📝 Напишите понравившиеся модели через запятую.\n\n"
             "Например: iPhone 17, Galaxy S27, Xiaomi 15"
         )
@@ -506,6 +498,7 @@ async def models_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CONFIRM
 
 async def show_confirm(update_or_query, context):
+    """Показывает экран подтверждения с двумя кнопками"""
     data = context.user_data
     
     text = (
@@ -517,7 +510,7 @@ async def show_confirm(update_or_query, context):
         f"♻️ Б/У: {data.get('used', 'Не указано')}\n"
         f"📝 Модели: {data.get('models', 'Не указано')}\n\n"
         "✅ Всё верно? Нажмите 'Подтвердить заявку'\n"
-        "✏️ Хотите изменить? Нажмите на нужный критерий"
+        "✏️ Хотите изменить? Нажмите 'Редактировать данные'"
     )
     
     if hasattr(update_or_query, 'edit_message_text'):
@@ -525,8 +518,90 @@ async def show_confirm(update_or_query, context):
     else:
         await update_or_query.message.reply_text(text, reply_markup=confirm_inline())
 
-# ---------- РЕДАКТИРОВАНИЕ ----------
-async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- ОБРАБОТЧИК ПОДТВЕРЖДЕНИЯ ----------
+async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "confirm_yes":
+        await query.edit_message_text(
+            "📞 Поделитесь контактом для связи:",
+            reply_markup=contact_keyboard()
+        )
+        return CONTACT
+    
+    elif query.data == "confirm_edit":
+        # Показываем выбор поля для редактирования
+        await query.edit_message_text(
+            "✏️ Выберите, что хотите изменить:",
+            reply_markup=edit_select_inline()
+        )
+        return EDIT_SELECT
+    
+    elif query.data == "home":
+        await query.edit_message_text(
+            "🏠 Вы в главном меню\n\nВыберите категорию техники:",
+            reply_markup=categories_inline()
+        )
+        return CATEGORY
+
+# ---------- ОБРАБОТЧИК РЕДАКТИРОВАНИЯ ----------
+async def handle_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    action = query.data
+    
+    if action == "edit_category":
+        await query.edit_message_text(
+            "📱 Выберите категорию техники:",
+            reply_markup=categories_inline()
+        )
+        return CATEGORY
+    
+    elif action == "edit_budget":
+        category = context.user_data.get('category', '📱 Смартфоны')
+        await query.edit_message_text(
+            f"💰 Выберите бюджет для {category}:",
+            reply_markup=budget_inline(category)
+        )
+        return BUDGET
+    
+    elif action == "edit_priority":
+        category = context.user_data.get('category', '📱 Смартфоны')
+        if category in NO_PRIORITY_CATEGORIES:
+            await query.answer("ℹ️ Для этой категории приоритет не требуется")
+            return EDIT_SELECT
+        await query.edit_message_text(
+            f"🎯 Выберите приоритет для {category}:",
+            reply_markup=priority_inline(category)
+        )
+        return PRIORITY
+    
+    elif action == "edit_used":
+        await query.edit_message_text(
+            "♻️ Рассматриваете б/у технику?",
+            reply_markup=used_inline()
+        )
+        return USED
+    
+    elif action == "edit_models":
+        await query.edit_message_text(
+            "📝 Напишите модели через запятую\n\n"
+            "Например: iPhone 17, Galaxy S27",
+            reply_markup=models_inline()
+        )
+        return MODELS
+    
+    elif action == "home":
+        await query.edit_message_text(
+            "🏠 Вы в главном меню\n\nВыберите категорию техники:",
+            reply_markup=categories_inline()
+        )
+        return CATEGORY
+
+# ---------- НАВИГАЦИОННЫЕ КОЛБЭКИ ----------
+async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
@@ -578,71 +653,8 @@ async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=used_inline()
         )
         return USED
-    
-    # Редактирование конкретных полей
-    elif action == "edit_category":
-        await query.edit_message_text(
-            "📱 Выберите категорию техники:",
-            reply_markup=categories_inline()
-        )
-        return CATEGORY
-    
-    elif action == "edit_budget":
-        category = context.user_data.get('category', '📱 Смартфоны')
-        await query.edit_message_text(
-            f"💰 Выберите бюджет для {category}:",
-            reply_markup=budget_inline(category)
-        )
-        return BUDGET
-    
-    elif action == "edit_priority":
-        category = context.user_data.get('category', '📱 Смартфоны')
-        if category in NO_PRIORITY_CATEGORIES:
-            await query.answer("ℹ️ Для этой категории приоритет не требуется")
-            return CONFIRM
-        await query.edit_message_text(
-            f"🎯 Выберите приоритет для {category}:",
-            reply_markup=priority_inline(category)
-        )
-        return PRIORITY
-    
-    elif action == "edit_used":
-        await query.edit_message_text(
-            "♻️ Рассматриваете б/у технику?",
-            reply_markup=used_inline()
-        )
-        return USED
-    
-    elif action == "edit_models":
-        await query.edit_message_text(
-            "📝 Напишите модели через запятую\n\n"
-            "Например: iPhone 17, Galaxy S27",
-            reply_markup=models_inline()
-        )
-        return MODELS
 
-# ---------- ПОДТВЕРЖДЕНИЕ И КОНТАКТ ----------
-async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "confirm_yes":
-        await query.edit_message_text(
-            "📞 Поделитесь контактом для связи:",
-            reply_markup=contact_keyboard()
-        )
-        return CONTACT
-    
-    elif query.data == "home":
-        await query.edit_message_text(
-            "🏠 Вы в главном меню\n\nВыберите категорию техники:",
-            reply_markup=categories_inline()
-        )
-        return CATEGORY
-    
-    else:
-        return await handle_edit(update, context)
-
+# ---------- КОНТАКТ ----------
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.contact:
         await update.message.reply_text(
@@ -675,9 +687,9 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).fetchone()[0]
     
     await update.message.reply_text(
-        f"✅ Заявка принята!\n\n"
+        f"✅ Заявка #{request_number} принята!\n\n"
         "🎉 Спасибо за обращение в NoFuss Guide!\n\n"
-        "Я изучу ваши требования и подберу наиболее подходящие варианты техники.\n\n"
+        "Специалист изучит ваши требования и подберёт наиболее подходящие варианты техники.\n\n"
         "⏱ Обычно ответ занимает от нескольких часов до одного дня.\n\n"
         "📢 Подпишитесь на наш канал: https://t.me/NoFussGuide",
         reply_markup=remove_keyboard()
@@ -1080,31 +1092,34 @@ async def main():
         states={
             CATEGORY: [
                 CallbackQueryHandler(handle_category, pattern="^cat_"),
-                CallbackQueryHandler(handle_edit, pattern="^(home|back_to_categories)$")
+                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_categories)$")
             ],
             BUDGET: [
                 CallbackQueryHandler(handle_budget, pattern="^budget_"),
-                CallbackQueryHandler(handle_edit, pattern="^(home|back_to_categories)$")
+                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_categories)$")
             ],
             PRIORITY: [
                 CallbackQueryHandler(handle_priority, pattern="^priority_"),
-                CallbackQueryHandler(handle_edit, pattern="^(home|back_to_budget)$")
+                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_budget)$")
             ],
             USED: [
                 CallbackQueryHandler(handle_used, pattern="^used_"),
-                CallbackQueryHandler(handle_edit, pattern="^(home|back_to_priority)$")
+                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_priority)$")
             ],
             MODELS: [
                 CallbackQueryHandler(handle_models, pattern="^(models_specify|models_skip)$"),
-                CallbackQueryHandler(handle_edit, pattern="^(home|back_to_used)$"),
+                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_used)$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, models_text)
             ],
             CONFIRM: [
-                CallbackQueryHandler(handle_confirm, pattern="^(confirm_yes|home|edit_category|edit_budget|edit_priority|edit_used|edit_models)$"),
+                CallbackQueryHandler(handle_confirm, pattern="^(confirm_yes|confirm_edit|home)$")
+            ],
+            EDIT_SELECT: [
+                CallbackQueryHandler(handle_edit_select, pattern="^(edit_category|edit_budget|edit_priority|edit_used|edit_models|home)$")
             ],
             CONTACT: [
                 MessageHandler(filters.CONTACT, contact_handler),
-                CallbackQueryHandler(handle_edit, pattern="^home$")
+                CallbackQueryHandler(handle_navigation, pattern="^home$")
             ],
             EDITING_POST: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_post),
