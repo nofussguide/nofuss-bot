@@ -5,13 +5,19 @@ import sqlite3
 import csv
 import re
 import json
+import feedparser
+import hashlib
 from datetime import datetime, timedelta
 from functools import wraps
 from aiohttp import web
 import logging
+from typing import List, Dict, Optional
 
-# Настройка логирования для отладки
-logging.basicConfig(level=logging.INFO)
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 from aiogram import Bot, Dispatcher, F
@@ -28,15 +34,14 @@ from aiogram.fsm.storage.memory import MemoryStorage
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
 
-# Оптимизация: используем MemoryStorage с очисткой
 storage = MemoryStorage()
 bot = Bot(TOKEN)
 dp = Dispatcher(storage=storage)
 
 user_last_request = {}
-# Кеш для быстрого доступа к данным
 cache = {
     'stats': {},
+    'news': {},
     'last_updated': 0
 }
 
@@ -47,19 +52,16 @@ async def health(request):
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/", health)
-
     runner = web.AppRunner(app)
     await runner.setup()
-
     port = int(os.environ.get('PORT', 10000))
     site = web.TCPSite(runner, '0.0.0.0', port)
-
     await site.start()
     logger.info(f"Web server started on port {port}")
 # ----------------------------------
 
 
-# ---------- MIGRATION ----------
+# ---------- БАЗА ДАННЫХ ----------
 def migrate_db():
     cursor.execute("PRAGMA table_info(requests)")
     columns = [col[1] for col in cursor.fetchall()]
@@ -87,11 +89,23 @@ def migrate_db():
     )
     """)
     
+    # Таблица для хранения опубликованных новостей
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS published_news (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        content TEXT,
+        source TEXT,
+        link TEXT,
+        published_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        post_type TEXT DEFAULT 'news',
+        hash TEXT UNIQUE
+    )
+    """)
+    
     db.commit()
-# --------------------------------
+    logger.info("Database migration completed")
 
-
-# Оптимизация: используем WAL режим для SQLite
 db = sqlite3.connect("nofuss.db", check_same_thread=False)
 db.execute("PRAGMA journal_mode=WAL")
 db.execute("PRAGMA synchronous=NORMAL")
@@ -128,7 +142,6 @@ db.commit()
 
 migrate_db()
 
-# Исправленный триггер для правильной нумерации с 1
 cursor.execute("DROP TRIGGER IF EXISTS set_request_number")
 cursor.execute("""
 CREATE TRIGGER IF NOT EXISTS set_request_number 
@@ -145,7 +158,7 @@ END;
 """)
 db.commit()
 
-# Фикс: обновляем номера существующих заявок
+# Обновляем номера существующих заявок
 cursor.execute("""
 UPDATE requests 
 SET request_number = (
@@ -161,6 +174,138 @@ WHERE request_number IS NULL OR request_number != (
 """)
 db.commit()
 
+
+# ---------- RSS ИСТОЧНИКИ ----------
+TECH_RSS_FEEDS = {
+    # Крупные технологические издания
+    "The Verge": "https://www.theverge.com/rss/index.xml",
+    "TechCrunch": "https://techcrunch.com/feed/",
+    "Wired": "https://www.wired.com/feed/rss",
+    "Engadget": "https://www.engadget.com/rss.xml",
+    "Ars Technica": "https://feeds.arstechnica.com/arstechnica/index",
+    "CNET": "https://www.cnet.com/rss/news/",
+    "Tom's Hardware": "https://www.tomshardware.com/feeds/all",
+    "XDA Developers": "https://www.xda-developers.com/feed/",
+    "Android Authority": "https://www.androidauthority.com/feed/",
+    "GSMArena": "https://www.gsmarena.com/rss-news-reviews.php3",
+    "Notebookcheck": "https://www.notebookcheck.net/feed/",
+    "Digital Trends": "https://www.digitaltrends.com/feed/",
+    "Pocket-lint": "https://www.pocket-lint.com/rss",
+    "Android Central": "https://www.androidcentral.com/feeds/all",
+    "iMore": "https://www.imore.com/rss.xml",
+    "9to5Mac": "https://9to5mac.com/feed/",
+    "9to5Google": "https://9to5google.com/feed/",
+    "Windows Central": "https://www.windowscentral.com/feeds/all",
+    "TechRadar": "https://www.techradar.com/rss",
+    "ZDNet": "https://www.zdnet.com/news/rss.xml",
+    "PCWorld": "https://www.pcworld.com/feed/",
+    "MacRumors": "https://www.macrumors.com/feed/",
+    "Android Police": "https://www.androidpolice.com/feed/",
+    "SamMobile": "https://www.sammobile.com/feed/",
+    "Xiaomi Today": "https://xiaomitoday.com/feed/",
+    "Huawei Central": "https://www.huaweicentral.com/feed/",
+    
+    # Официальные блоги компаний
+    "Google Blog": "https://blog.google/rss/",
+    "Google Developer Blog": "https://developers.googleblog.com/feeds/posts/default",
+    "Google Security Blog": "https://security.googleblog.com/feeds/posts/default",
+    "Apple Newsroom": "https://www.apple.com/newsroom/rss-feed.rss",
+    "Microsoft Blog": "https://blogs.microsoft.com/feed/",
+    "Microsoft Tech": "https://techcommunity.microsoft.com/blog/rss",
+    "NVIDIA Blog": "https://blogs.nvidia.com/feed/",
+    "NVIDIA Technical Blog": "https://developer.nvidia.com/blog/feed/",
+    "Xiaomi Blog": "https://blog.mi.com/en/feed/",
+    "Honor Blog": "https://www.honor.com/global/feed/",
+    "Huawei Blog": "https://consumer.huawei.com/en/community/feed/",
+    "Samsung Newsroom": "https://news.samsung.com/global/feed",
+    "OnePlus Blog": "https://www.oneplus.com/feed",
+    "Oppo Blog": "https://www.oppo.com/en/feed/",
+    "Vivo Blog": "https://www.vivo.com/en/feed/",
+    "Sony Blog": "https://www.sony.com/en/feed/",
+    "Lenovo Blog": "https://blog.lenovo.com/feed/",
+    "ASUS Blog": "https://www.asus.com/feed/",
+    "Dell Blog": "https://www.dell.com/feed/",
+    "HP Blog": "https://www.hp.com/us-en/feed/",
+}
+
+# Полезные темы для образовательных постов
+EDUCATIONAL_TOPICS = [
+    {
+        "title": "Как правильно ухаживать за смартфоном",
+        "topics": [
+            "Очистка экрана и корпуса",
+            "Правильная зарядка",
+            "Оптимизация батареи",
+            "Защита от воды и пыли",
+            "Обновление ПО"
+        ]
+    },
+    {
+        "title": "Выбор идеального ноутбука",
+        "topics": [
+            "Типы процессоров",
+            "Видеокарты для разных задач",
+            "Оперативная память",
+            "Хранение данных",
+            "Экран и разрешение"
+        ]
+    },
+    {
+        "title": "Как не обмануться при покупке техники",
+        "topics": [
+            "Признаки перекупленного товара",
+            "Как проверить подлинность",
+            "Фальшивые скидки",
+            "Гарантия и сервисные центры",
+            "Отзывы и репутация продавца"
+        ]
+    },
+    {
+        "title": "Важные характеристики смартфона",
+        "topics": [
+            "Процессор и производительность",
+            "Камера и фото-возможности",
+            "Автономность и зарядка",
+            "Экран: разрешение, частота, яркость",
+            "Память и её расширение"
+        ]
+    },
+    {
+        "title": "Как выбрать идеальный телевизор",
+        "topics": [
+            "Разрешение: 4K, 8K, Full HD",
+            "Тип матрицы: OLED, QLED, LED",
+            "Частота обновления",
+            "Смарт-ТВ и приложения",
+            "Подключение и порты"
+        ]
+    },
+    {
+        "title": "Уход за ноутбуком: продлеваем жизнь",
+        "topics": [
+            "Очистка от пыли",
+            "Правильная зарядка аккумулятора",
+            "Термопаста и охлаждение",
+            "Уход за клавиатурой и экраном",
+            "Хранение и транспортировка"
+        ]
+    }
+]
+
+class Form(StatesGroup):
+    category = State()
+    budget = State()
+    priority = State()
+    used = State()
+    models_choice = State()
+    models = State()
+    contact = State()
+    confirm = State()
+    admin_chat = State()
+    news_editing = State()
+
+
+# ---------- КАТЕГОРИИ И БЮДЖЕТЫ ----------
 CATEGORIES = {
     "📱 Смартфоны": "smartphones",
     "💻 Ноутбуки": "laptops",
@@ -246,17 +391,6 @@ PRIORITIES = {
         ("💼 Универсальность", "priority_balanced"),
     ],
 }
-
-class Form(StatesGroup):
-    category = State()
-    budget = State()
-    priority = State()
-    used = State()
-    models_choice = State()
-    models = State()
-    contact = State()
-    confirm = State()
-    admin_chat = State()
 
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
@@ -473,6 +607,142 @@ def contact_request_keyboard():
 
 def remove_keyboard():
     return ReplyKeyboardMarkup(keyboard=[], resize_keyboard=True)
+
+
+# ---------- НОВОСТНАЯ СИСТЕМА ----------
+class NewsManager:
+    def __init__(self, admin_id: int, channel_id: str):
+        self.admin_id = admin_id
+        self.channel_id = channel_id
+        self.last_check = 0
+        self.news_cache = {}
+        self.pending_posts = {}
+    
+    async def fetch_all_news(self) -> List[Dict]:
+        """Парсит все RSS-ленты и собирает свежие новости"""
+        all_articles = []
+        sources_success = 0
+        sources_fail = 0
+        
+        for source, url in TECH_RSS_FEEDS.items():
+            try:
+                feed = feedparser.parse(url)
+                
+                if feed.entries:
+                    sources_success += 1
+                    for entry in feed.entries[:5]:
+                        published_parsed = entry.get('published_parsed')
+                        if published_parsed:
+                            pub_time = time.mktime(published_parsed)
+                            if time.time() - pub_time > 604800:
+                                continue
+                        
+                        content_hash = hashlib.md5(
+                            f"{entry.get('title', '')}{entry.get('link', '')}".encode()
+                        ).hexdigest()
+                        
+                        existing = cursor.execute(
+                            "SELECT id FROM published_news WHERE hash = ?", 
+                            (content_hash,)
+                        ).fetchone()
+                        
+                        if existing:
+                            continue
+                        
+                        all_articles.append({
+                            'title': entry.get('title', 'Без заголовка'),
+                            'summary': entry.get('summary', ''),
+                            'link': entry.get('link', ''),
+                            'source': source,
+                            'published': entry.get('published', ''),
+                            'hash': content_hash,
+                            'categories': entry.get('tags', [])
+                        })
+                else:
+                    sources_fail += 1
+                    logger.warning(f"Нет записей в RSS: {source}")
+                    
+            except Exception as e:
+                sources_fail += 1
+                logger.error(f"Ошибка парсинга {source}: {e}")
+        
+        logger.info(f"Парсинг завершен: успешно {sources_success}, ошибок {sources_fail}")
+        
+        all_articles.sort(key=lambda x: x.get('published', ''), reverse=True)
+        return all_articles[:30]
+    
+    def get_educational_post(self, day_offset: int = 0) -> Dict:
+        """Генерирует образовательный пост"""
+        topic = EDUCATIONAL_TOPICS[day_offset % len(EDUCATIONAL_TOPICS)]
+        
+        post_text = f"📚 **{topic['title']}**\n\n"
+        for i, subtopic in enumerate(topic['topics'], 1):
+            post_text += f"{i}. {subtopic}\n"
+        
+        post_text += "\n💡 А что для вас самое важное при выборе техники? Пишите в комментариях!"
+        post_text += "\n\n#советы #техника #полезное"
+        
+        return {
+            'title': topic['title'],
+            'content': post_text,
+            'type': 'educational'
+        }
+    
+    async def generate_news_post(self, articles: List[Dict]) -> Dict:
+        """Генерирует пост на основе новостей"""
+        if not articles:
+            return None
+        
+        selected = articles[:5]
+        
+        post_text = "📰 **Дайджест новостей мира техники**\n\n"
+        
+        for i, article in enumerate(selected, 1):
+            post_text += f"{i}. **{article['title']}**\n"
+            post_text += f"   📌 {article['source']}\n"
+            post_text += f"   📅 {article['published'][:10] if article['published'] else 'Дата неизвестна'}\n"
+            post_text += f"   🔗 [Читать подробнее]({article['link']})\n\n"
+        
+        post_text += "➡️ **Хотите быть в курсе всех новостей?**\n"
+        post_text += "Подписывайтесь на наш канал и следите за обновлениями!\n\n"
+        post_text += "#новости #технологии #обзор"
+        
+        return {
+            'title': 'Дайджест новостей мира техники',
+            'content': post_text,
+            'type': 'news',
+            'articles': selected
+        }
+    
+    async def prepare_posts_for_admin(self) -> Dict:
+        """Подготавливает посты для отправки админу"""
+        articles = await self.fetch_all_news()
+        
+        if not articles:
+            return None
+        
+        news_post = await self.generate_news_post(articles)
+        
+        day_index = datetime.now().day % len(EDUCATIONAL_TOPICS)
+        edu_post = self.get_educational_post(day_index)
+        
+        return {
+            'news': news_post,
+            'educational': edu_post,
+            'articles': articles
+        }
+    
+    def mark_published(self, post_type: str, content: str, title: str, source: str = '', link: str = ''):
+        """Отмечает пост как опубликованный"""
+        content_hash = hashlib.md5(f"{title}{content}".encode()).hexdigest()
+        
+        cursor.execute(
+            """INSERT OR IGNORE INTO published_news 
+               (title, content, source, link, post_type, hash) 
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (title, content, source, link, post_type, content_hash)
+        )
+        db.commit()
 
 
 # ---------- ОСНОВНЫЕ ОБРАБОТЧИКИ ----------
@@ -1034,6 +1304,292 @@ async def finish_request(message: Message, state: FSMContext):
     await state.clear()
 
 
+# ---------- НОВОСТНЫЕ КОМАНДЫ ----------
+@dp.message(Command("news_now"))
+async def get_news_now(message: Message):
+    """Принудительный сбор и отправка новостей админу"""
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ Эта команда только для администратора")
+        return
+    
+    status_msg = await message.answer("🔍 Собираю свежие новости... Это может занять 20-30 секунд.")
+    
+    try:
+        posts_data = await news_manager.prepare_posts_for_admin()
+        
+        if not posts_data:
+            await status_msg.edit_text("❌ Не удалось собрать новости. Попробуйте позже.")
+            return
+        
+        await status_msg.edit_text("✅ Новости собраны! Отправляю варианты...")
+        
+        news_manager.pending_posts[message.from_user.id] = posts_data
+        
+        # Отправляем новостной пост
+        news_post = posts_data.get('news')
+        if news_post:
+            await send_post_to_admin(message, news_post, 'news', 0)
+        
+        # Отправляем образовательный пост
+        edu_post = posts_data.get('educational')
+        if edu_post:
+            await send_post_to_admin(message, edu_post, 'educational', 1)
+        
+        # Отправляем список новостей отдельно
+        articles = posts_data.get('articles', [])
+        if articles:
+            text = "📰 **Список собранных новостей:**\n\n"
+            for i, art in enumerate(articles[:10], 1):
+                text += f"{i}. **{art['title'][:80]}...**\n"
+                text += f"   📌 {art['source']}\n\n"
+            
+            await bot.send_message(
+                ADMIN_ID,
+                text,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton("📤 Опубликовать все новости", callback_data="publish_all_news")]
+                    ]
+                )
+            )
+        
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
+        logger.error(f"Error in get_news_now: {e}")
+
+
+async def send_post_to_admin(message: Message, post: Dict, post_type: str, index: int):
+    """Отправляет пост админу с кнопками"""
+    title = post.get('title', '')
+    content = post.get('content', '')
+    
+    text = f"📝 **Вариант {index + 1} ({'Новости' if post_type == 'news' else 'Полезное'})**\n\n"
+    text += f"**{title}**\n\n"
+    text += content
+    
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton("📤 Опубликовать", callback_data=f"publish_post_{post_type}_{index}"),
+                InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_post_{post_type}_{index}")
+            ],
+            [
+                InlineKeyboardButton("🔄 Обновить новости", callback_data="refresh_news"),
+                InlineKeyboardButton("📋 Все новости", callback_data="view_all_news")
+            ],
+            [
+                InlineKeyboardButton("❌ Закрыть", callback_data="close_news")
+            ]
+        ]
+    )
+    
+    await bot.send_message(
+        ADMIN_ID,
+        text,
+        parse_mode="Markdown",
+        disable_web_page_preview=True,
+        reply_markup=keyboard
+    )
+
+
+@dp.callback_query(F.data.startswith("publish_post_"))
+async def publish_post_callback(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    parts = callback.data.split("_")
+    post_type = parts[2]
+    index = int(parts[3])
+    
+    user_id = callback.from_user.id
+    posts_data = news_manager.pending_posts.get(user_id, {})
+    
+    if post_type == 'news':
+        post = posts_data.get('news')
+    else:
+        post = posts_data.get('educational')
+    
+    if not post:
+        await callback.answer("❌ Пост не найден")
+        return
+    
+    channel_id = os.getenv("CHANNEL_ID")
+    
+    if not channel_id:
+        await callback.answer(
+            "❌ Не указан ID канала. Добавьте CHANNEL_ID в переменные окружения"
+        )
+        return
+    
+    try:
+        publish_text = f"**{post['title']}**\n\n{post['content']}"
+        await bot.send_message(
+            channel_id,
+            publish_text,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+        
+        news_manager.mark_published(
+            post_type=post_type,
+            title=post['title'],
+            content=post['content'],
+            source='',
+            link=''
+        )
+        
+        await callback.message.edit_text(
+            f"{callback.message.text}\n\n✅ **Пост успешно опубликован в канале @NoFussGuide!** 🎉",
+            parse_mode="Markdown"
+        )
+        await callback.answer("✅ Пост опубликован!")
+        
+        await bot.send_message(
+            ADMIN_ID,
+            f"✅ Пост типа '{post_type}' успешно опубликован в канале @NoFussGuide!"
+        )
+        
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка публикации: {str(e)}")
+        logger.error(f"Publish error: {e}")
+
+
+@dp.callback_query(F.data == "publish_all_news")
+async def publish_all_news_callback(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    user_id = callback.from_user.id
+    posts_data = news_manager.pending_posts.get(user_id, {})
+    news_post = posts_data.get('news')
+    
+    if not news_post:
+        await callback.answer("❌ Новости не найдены")
+        return
+    
+    channel_id = os.getenv("CHANNEL_ID")
+    if not channel_id:
+        await callback.answer("❌ Не указан ID канала")
+        return
+    
+    try:
+        publish_text = f"**{news_post['title']}**\n\n{news_post['content']}"
+        await bot.send_message(
+            channel_id,
+            publish_text,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+        
+        await callback.answer("✅ Все новости опубликованы!")
+        await callback.message.edit_text(
+            f"{callback.message.text}\n\n✅ **Все новости опубликованы!** 🎉"
+        )
+        
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка: {str(e)}")
+
+
+@dp.callback_query(F.data.startswith("edit_post_"))
+async def edit_post_callback(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    parts = callback.data.split("_")
+    post_type = parts[2]
+    index = int(parts[3])
+    
+    user_id = callback.from_user.id
+    posts_data = news_manager.pending_posts.get(user_id, {})
+    
+    if post_type == 'news':
+        post = posts_data.get('news')
+    else:
+        post = posts_data.get('educational')
+    
+    if not post:
+        await callback.answer("❌ Пост не найден")
+        return
+    
+    await state.update_data({
+        'editing_type': post_type,
+        'editing_index': index,
+        'editing_content': post['content'],
+        'editing_title': post['title']
+    })
+    await state.set_state(Form.news_editing)
+    
+    await callback.message.edit_text(
+        f"✏️ **Редактирование поста**\n\n"
+        f"**Текущий заголовок:**\n{post['title']}\n\n"
+        f"**Текущий текст:**\n{post['content']}\n\n"
+        "📝 Напишите новый текст поста (Markdown поддерживается):",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton("❌ Отмена", callback_data="close_news")]
+            ]
+        )
+    )
+    await callback.answer()
+
+
+@dp.message(Form.news_editing)
+async def process_edit_post(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    data = await state.get_data()
+    post_type = data.get('editing_type')
+    index = data.get('editing_index')
+    
+    user_id = message.from_user.id
+    posts_data = news_manager.pending_posts.get(user_id, {})
+    
+    if post_type == 'news':
+        post = posts_data.get('news')
+    else:
+        post = posts_data.get('educational')
+    
+    if not post:
+        await message.answer("❌ Пост не найден")
+        await state.clear()
+        return
+    
+    post['content'] = message.text
+    if post_type == 'news':
+        posts_data['news'] = post
+    else:
+        posts_data['educational'] = post
+    
+    news_manager.pending_posts[user_id] = posts_data
+    
+    await message.answer("✅ Пост обновлён!")
+    await state.clear()
+    
+    await send_post_to_admin(message, post, post_type, index)
+
+
+@dp.callback_query(F.data == "refresh_news")
+async def refresh_news_callback(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    await callback.answer("🔄 Обновляю новости...")
+    await get_news_now(callback.message)
+
+
+@dp.callback_query(F.data == "close_news")
+async def close_news_callback(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.delete()
+    await callback.answer()
+
+
 # ---------- АДМИН: УПРАВЛЕНИЕ СТАТУСАМИ ----------
 @dp.callback_query(F.data.startswith("admin_status_"))
 async def admin_status_callback(callback: CallbackQuery):
@@ -1066,7 +1622,6 @@ async def admin_status_callback(callback: CallbackQuery):
     )
     db.commit()
     
-    # Очищаем кеш
     get_cached_stats(force_refresh=True)
     
     status_text = get_status_text(new_status)
@@ -1166,12 +1721,10 @@ async def admin(message: Message):
 
     stats = get_cached_stats(force_refresh=True)
     
-    # Получаем статистику по категориям
     categories_stats = cursor.execute(
         "SELECT category, COUNT(*) FROM requests GROUP BY category"
     ).fetchall()
     
-    # Получаем статистику за неделю
     week_stats = cursor.execute("""
         SELECT DATE(created_at) as date, COUNT(*) 
         FROM requests 
@@ -1222,7 +1775,6 @@ async def admin_recent_callback(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён")
         return
     
-    # Исправлено: правильная нумерация с 1
     requests = cursor.execute(
         """SELECT id, request_number, user_id, category, status, created_at
         FROM requests 
@@ -1254,12 +1806,10 @@ async def admin_recent_callback(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "admin_recent_refresh")
 async def admin_recent_refresh_callback(callback: CallbackQuery):
-    """Обновление списка последних заявок"""
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("⛔ Доступ запрещён")
         return
     
-    # Перезапускаем admin_recent с обновленными данными
     await admin_recent_callback(callback)
 
 
@@ -1273,13 +1823,12 @@ async def admin_back_callback(callback: CallbackQuery):
     await admin(callback.message)
 
 
-# ---------- ЭКСПОРТ (ИСПРАВЛЕННАЯ ВЕРСИЯ) ----------
+# ---------- ЭКСПОРТ ----------
 @dp.message(Command("export"))
 async def export_data(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    # Получаем данные с правильной кодировкой
     rows = cursor.execute(
         """SELECT 
             request_number,
@@ -1299,7 +1848,6 @@ async def export_data(message: Message):
 
     filename = f"nofuss_export_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
 
-    # Используем правильную кодировку для русского языка
     with open(filename, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
         writer.writerow([
@@ -1316,22 +1864,17 @@ async def export_data(message: Message):
             "Комментарий админа"
         ])
         
-        # Преобразуем данные в строки с правильной кодировкой
         for row in rows:
-            # Преобразуем None в пустые строки
             formatted_row = []
             for item in row:
                 if item is None:
                     formatted_row.append("")
                 else:
-                    # Убеждаемся, что все данные в строковом формате
                     formatted_row.append(str(item))
             writer.writerow(formatted_row)
 
-    # Отправляем файл
     await message.answer_document(FSInputFile(filename))
     
-    # Удаляем файл через некоторое время
     await asyncio.sleep(5)
     try:
         os.remove(filename)
@@ -1431,6 +1974,71 @@ async def cancel_command(message: Message, state: FSMContext):
     )
 
 
+# ---------- ФОНОВАЯ ПРОВЕРКА НОВОСТЕЙ ----------
+async def scheduled_news_check():
+    """Фоновый процесс для автоматической проверки новостей"""
+    logger.info("Scheduled news checker started")
+    
+    channel_id = os.getenv("CHANNEL_ID")
+    if not channel_id:
+        logger.warning("CHANNEL_ID не указан! Автопубликация отключена.")
+        await bot.send_message(
+            ADMIN_ID,
+            "⚠️ **Внимание!** CHANNEL_ID не указан в переменных окружения.\n"
+            "Добавьте его для автоматической публикации постов."
+        )
+    
+    while True:
+        try:
+            articles = await news_manager.fetch_all_news()
+            
+            if articles:
+                news_count = len(articles)
+                sources = set([a['source'] for a in articles[:10]])
+                
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"📰 **Обнаружено {news_count} новых новостей!**\n\n"
+                    f"Источники: {', '.join(list(sources)[:5])}\n\n"
+                    f"Используйте /news_now для генерации постов."
+                )
+                
+                top_news = articles[:5]
+                text = "🔥 **Топ-5 новостей:**\n\n"
+                for i, news in enumerate(top_news, 1):
+                    text += f"{i}. **{news['title'][:100]}...**\n"
+                    text += f"   📌 {news['source']}\n\n"
+                
+                await bot.send_message(
+                    ADMIN_ID,
+                    text,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True
+                )
+            
+            day_index = datetime.now().day % len(EDUCATIONAL_TOPICS)
+            edu_post = news_manager.get_educational_post(day_index)
+            
+            today = datetime.now().strftime("%Y-%m-%d")
+            existing = cursor.execute(
+                "SELECT id FROM published_news WHERE post_type='educational' AND DATE(published_at) = ?",
+                (today,)
+            ).fetchone()
+            
+            if not existing and channel_id:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"📚 **Ежедневный полезный пост**\n\n"
+                    f"{edu_post['content']}\n\n"
+                    "Нажмите 'Опубликовать' чтобы отправить в канал"
+                )
+                
+        except Exception as e:
+            logger.error(f"Ошибка в scheduled_news_check: {e}")
+        
+        await asyncio.sleep(21600)
+
+
 # ---------- FALLBACK ----------
 @dp.message()
 async def fallback(message: Message):
@@ -1457,11 +2065,51 @@ async def fallback_callback(callback: CallbackQuery):
     await callback.answer()
 
 
+# ---------- ОСНОВНАЯ ФУНКЦИЯ ----------
 async def main():
-    # Запускаем веб-сервер для health check
+    global news_manager
+    
+    # Запускаем веб-сервер
     await start_web_server()
     
-    # Запускаем бота
+    # Проверяем наличие CHANNEL_ID
+    channel_id = os.getenv("CHANNEL_ID")
+    if channel_id:
+        logger.info(f"Канал для публикаций: {channel_id}")
+        await bot.send_message(
+            ADMIN_ID,
+            f"📢 **Канал для публикаций настроен!**\n\n"
+            f"ID канала: {channel_id}\n"
+            f"Юзернейм: @NoFussGuide\n\n"
+            f"Теперь посты будут публиковаться в твой канал."
+        )
+    else:
+        logger.warning("CHANNEL_ID не указан!")
+        await bot.send_message(
+            ADMIN_ID,
+            "⚠️ **CHANNEL_ID не указан!**\n\n"
+            "Добавьте переменную CHANNEL_ID в настройки Render.\n"
+            "Иначе посты не будут публиковаться в канал."
+        )
+    
+    # Инициализируем NewsManager с channel_id
+    news_manager = NewsManager(ADMIN_ID, channel_id)
+    
+    # Запускаем фоновую проверку новостей
+    asyncio.create_task(scheduled_news_check())
+    
+    # Отправляем приветственное сообщение админу
+    await bot.send_message(
+        ADMIN_ID,
+        "🤖 **Бот NoFuss Guide запущен!**\n\n"
+        "✅ Канал настроен: @NoFussGuide\n"
+        "📰 Автоматическая проверка новостей каждые 6 часов\n\n"
+        "Доступные команды:\n"
+        "/news_now - Принудительный сбор и отправка новостей\n"
+        "/admin - Панель администратора\n"
+        "/export - Экспорт заявок"
+    )
+    
     logger.info("Bot started!")
     await dp.start_polling(bot)
 
