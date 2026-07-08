@@ -16,6 +16,8 @@ import random
 import textwrap
 import signal
 import sys
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 
 # Для перевода
 from deep_translator import GoogleTranslator
@@ -33,7 +35,6 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
 UNSPLASH_ACCESS_KEY = "kPtZY-3eUqZh3Epo9iBbGufCXwyAPUyrZsR29B8j218"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://nofuss-bot.onrender.com")
 
 # ---------- БАЗА ДАННЫХ ----------
 db = sqlite3.connect("nofuss.db", check_same_thread=False)
@@ -837,6 +838,23 @@ def generate_post(article, index, total, source_name):
     image_url = get_news_image(title_ru)
     return {'text': post, 'image': image_url}
 
+# ---------- HTTP сервер для health check ----------
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+def run_health_server(port):
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    logger.info(f"Health check server running on port {port}")
+    server.serve_forever()
+
 # ---------- ОБРАБОТЧИКИ ----------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
@@ -1520,7 +1538,7 @@ async def theme_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик кнопок отзыва - исправлен для правильного формата"""
+    """Обработчик кнопок отзыва"""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -1529,14 +1547,13 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = query.data
         logger.info(f"Feedback callback data: {data}")
         
-        # Формат: fb_rating_{request_id}_{rating} или fb_text_{request_id} или fb_skip_{request_id}
         parts = data.split("_")
         
         if len(parts) < 3:
             await query.edit_message_text("❌ Ошибка в данных отзыва")
             return ConversationHandler.END
         
-        action = parts[1]  # rating, text, или skip
+        action = parts[1]
         request_id = int(parts[2])
         
         if action == "skip":
@@ -2099,19 +2116,19 @@ async def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
+    # Запускаем HTTP сервер для health check в отдельном потоке
+    port = int(os.environ.get("PORT", 10000))
+    health_thread = threading.Thread(target=run_health_server, args=(port,), daemon=True)
+    health_thread.start()
+    
     app = Application.builder().token(TOKEN).build()
     
-    # Получаем порт из переменной окружения Render
-    port = int(os.environ.get("PORT", 10000))
-    
+    # Удаляем вебхук чтобы использовать polling
     try:
-        # Устанавливаем вебхук
-        webhook_url = f"{WEBHOOK_URL}/webhook"
-        await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-        logger.info(f"Webhook set to {webhook_url}")
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook deleted successfully")
     except Exception as e:
-        logger.error(f"Error setting webhook: {e}")
-        return
+        logger.warning(f"Error deleting webhook: {e}")
     
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_command)],
@@ -2196,22 +2213,14 @@ async def main():
     app.add_handler(MessageHandler(filters.Regex('💬 Связаться'), contact_direct))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
     
-    logger.info(f"Bot started successfully on port {port}!")
+    logger.info("Bot started successfully!")
     
     try:
         await app.initialize()
         await app.start()
+        await app.updater.start_polling()
+        logger.info("Polling started...")
         
-        # Запускаем вебхук
-        await app.updater.start_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="webhook",
-            webhook_url=webhook_url
-        )
-        logger.info(f"Webhook listening on port {port}")
-        
-        # Держим бота активным
         while True:
             await asyncio.sleep(1)
     except (KeyboardInterrupt, SystemExit):
