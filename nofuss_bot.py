@@ -10,7 +10,7 @@ import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional, Any
 import html
 import random
 import textwrap
@@ -33,6 +33,7 @@ UNSPLASH_ACCESS_KEY = "kPtZY-3eUqZh3Epo9iBbGufCXwyAPUyrZsR29B8j218"
 db = sqlite3.connect("nofuss.db", check_same_thread=False)
 cursor = db.cursor()
 
+# Создание таблиц
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -80,6 +81,7 @@ CREATE TABLE IF NOT EXISTS drafts (
 )
 """)
 
+# Удаляем старый триггер если есть
 cursor.execute("DROP TRIGGER IF EXISTS set_request_number")
 cursor.execute("""
 CREATE TRIGGER IF NOT EXISTS set_request_number 
@@ -97,7 +99,7 @@ END;
 db.commit()
 
 # ---------- СОСТОЯНИЯ ----------
-CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING_POST, AFTER_SUBMIT, FEEDBACK, FEEDBACK_TEXT = range(12)
+CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING_POST, AFTER_SUBMIT, FEEDBACK, FEEDBACK_TEXT, ADMIN_CHAT = range(13)
 
 # ---------- МУЛЬТИЯЗЫЧНОСТЬ ----------
 TRANSLATIONS = {
@@ -154,7 +156,7 @@ TRANSLATIONS = {
         'settings_lang': "🌐 **Выберите язык:**",
         'settings_theme': "🎨 **Выберите тему:**",
         'about_text': "ℹ️ **О проекте NoFuss Guide**\n\n🤖 Бот собирает ваши пожелания, а итоговый подбор осуществляет специалист.\n\n📅 Версия: 2.0\n📧 Контакты: @goojifeed\n📢 Канал: @NoFussGuide\n\nСпасибо, что пользуетесь нашим сервисом! 🙏",
-        'commands_list': "📋 **Список команд**\n\n/start - Начать оформление заявки\n/stats - Моя статистика\n/settings - Настройки\n/faq - Частые вопросы\n/about - О проекте\n/commands - Список команд\n/cancel - Отменить действие\n/news_now - Собрать новости (только для админа)",
+        'commands_list': "📋 *Список команд*\n\n/start - Начать оформление заявки\n/stats - Моя статистика\n/settings - Настройки\n/faq - Частые вопросы\n/about - О проекте\n/commands - Список команд\n/cancel - Отменить действие\n/news_now - Собрать новости (только для админа)",
         'faq_text': "❓ Частые вопросы\n\n• Как быстро отвечаем? — В течение дня\n• Подбираете б/у? — Да\n• Стоимость? — Обсуждается индивидуально 🤝\n• Какие бренды? — Любые достойные варианты\n• Как оставить отзыв? — После выполнения заявки появится кнопка",
         'contact_direct': "💬 Написать напрямую: @goojifeed",
         'fallback_text': "Используйте кнопки меню 👇",
@@ -164,7 +166,7 @@ TRANSLATIONS = {
         'news_found': "✅ Найдено {count} новостей! Отправляю посты...",
         'post_published': "✅ **Пост опубликован!** 🎉",
         'publish_error': "❌ Ошибка публикации: {error}",
-        'edit_post': "✏️ **Редактирование поста**\n\nОтправьте новый текст (Markdown поддерживается)\n\nПример:\n**Заголовок**\nТекст новости...\n\n🔗 [Подробнее](url)\n\n— *NoFuss Guide*",
+        'edit_post': "✏️ *Редактирование поста*\n\nОтправьте новый текст (Markdown поддерживается)\n\nПример:\n*Заголовок*\nТекст новости...\n\n🔗 [Подробнее](url)\n\n— *NoFuss Guide*",
         'post_updated': "✅ Пост обновлён!",
         'post_not_found': "❌ Посты не найдены",
         'contact_admin': "📞 Связаться со специалистом",
@@ -250,7 +252,7 @@ TRANSLATIONS = {
         'settings_lang': "🌐 **Select language:**",
         'settings_theme': "🎨 **Select theme:**",
         'about_text': "ℹ️ **About NoFuss Guide**\n\n🤖 The bot collects your preferences, and a specialist makes the final selection.\n\n📅 Version: 2.0\n📧 Contacts: @goojifeed\n📢 Channel: @NoFussGuide\n\nThank you for using our service! 🙏",
-        'commands_list': "📋 **Commands list**\n\n/start - Start a request\n/stats - My statistics\n/settings - Settings\n/faq - FAQ\n/about - About project\n/commands - Commands list\n/cancel - Cancel action\n/news_now - Collect news (admin only)",
+        'commands_list': "📋 *Commands list*\n\n/start - Start a request\n/stats - My statistics\n/settings - Settings\n/faq - FAQ\n/about - About project\n/commands - Commands list\n/cancel - Cancel action\n/news_now - Collect news (admin only)",
         'faq_text': "❓ FAQ\n\n• How fast do we respond? — Within a day\n• Do you consider used devices? — Yes\n• Cost? — Discussed individually 🤝\n• Which brands? — Any worthy options\n• How to leave feedback? — After request completion, a button will appear",
         'contact_direct': "💬 Contact directly: @goojifeed",
         'fallback_text': "Use the menu buttons 👇",
@@ -260,7 +262,7 @@ TRANSLATIONS = {
         'news_found': "✅ Found {count} news! Sending posts...",
         'post_published': "✅ **Post published!** 🎉",
         'publish_error': "❌ Publication error: {error}",
-        'edit_post': "✏️ **Editing post**\n\nSend new text (Markdown supported)\n\nExample:\n**Title**\nNews text...\n\n🔗 [Read more](url)\n\n— *NoFuss Guide*",
+        'edit_post': "✏️ *Editing post*\n\nSend new text (Markdown supported)\n\nExample:\n*Title*\nNews text...\n\n🔗 [Read more](url)\n\n— *NoFuss Guide*",
         'post_updated': "✅ Post updated!",
         'post_not_found': "❌ Posts not found",
         'contact_admin': "📞 Contact specialist",
@@ -346,7 +348,7 @@ TRANSLATIONS = {
         'settings_lang': "🌐 **Тілді таңдаңыз:**",
         'settings_theme': "🎨 **Тақырыпты таңдаңыз:**",
         'about_text': "ℹ️ **NoFuss Guide жобасы туралы**\n\n🤖 Бот сіздің тілектеріңізді жинайды, ал нақты таңдауды маман жасайды.\n\n📅 Нұсқа: 2.0\n📧 Байланыс: @goojifeed\n📢 Арна: @NoFussGuide\n\nБіздің сервисті пайдаланғаныңыз үшін рахмет! 🙏",
-        'commands_list': "📋 **Командалар тізімі**\n\n/start - Өтінімді бастау\n/stats - Менің статистикам\n/settings - Баптаулар\n/faq - Жиі қойылатын сұрақтар\n/about - Жоба туралы\n/commands - Командалар тізімі\n/cancel - Әрекетті болдырмау\n/news_now - Жаңалықтар жинау (тек админ үшін)",
+        'commands_list': "📋 *Командалар тізімі*\n\n/start - Өтінімді бастау\n/stats - Менің статистикам\n/settings - Баптаулар\n/faq - Жиі қойылатын сұрақтар\n/about - Жоба туралы\n/commands - Командалар тізімі\n/cancel - Әрекетті болдырмау\n/news_now - Жаңалықтар жинау (тек админ үшін)",
         'faq_text': "❓ Жиі қойылатын сұрақтар\n\n• Қаншалықты тез жауап береміз? — Күн ішінде\n• Пайдаланылған техниканы қарастырасыз ба? — Иә\n• Құны? — Жеке келісіледі 🤝\n• Қандай брендтер? — Кез келген лайықты нұсқалар\n• Пікірді қалай қалдыруға болады? — Өтінім орындалғаннан кейін батырма пайда болады",
         'contact_direct': "💬 Тікелей хат жазу: @goojifeed",
         'fallback_text': "Мәзір батырмаларын пайдаланыңыз 👇",
@@ -356,7 +358,7 @@ TRANSLATIONS = {
         'news_found': "✅ {count} жаңалық табылды! Посттар жіберілуде...",
         'post_published': "✅ **Пост жарияланды!** 🎉",
         'publish_error': "❌ Жариялау қатесі: {error}",
-        'edit_post': "✏️ **Посты өңдеу**\n\nЖаңа мәтінді жіберіңіз (Markdown қолдау көрсетеді)\n\nМысал:\n**Тақырып**\nЖаңалық мәтіні...\n\n🔗 [Толығырақ](url)\n\n— *NoFuss Guide*",
+        'edit_post': "✏️ *Посты өңдеу*\n\nЖаңа мәтінді жіберіңіз (Markdown қолдау көрсетеді)\n\nМысал:\n*Тақырып*\nЖаңалық мәтіні...\n\n🔗 [Толығырақ](url)\n\n— *NoFuss Guide*",
         'post_updated': "✅ Пост жаңартылды!",
         'post_not_found': "❌ Посттар табылмады",
         'contact_admin': "📞 Маманға хабарласу",
@@ -496,16 +498,34 @@ def get_status_text(status, user_id=None):
     return status_map.get(status, status)
 
 def save_draft(user_id, data):
-    cursor.execute("INSERT OR REPLACE INTO drafts(user_id, data) VALUES(?, ?)", (user_id, json.dumps(data, ensure_ascii=False)))
-    db.commit()
+    try:
+        cursor.execute("INSERT OR REPLACE INTO drafts(user_id, data) VALUES(?, ?)", 
+                      (user_id, json.dumps(data, ensure_ascii=False)))
+        db.commit()
+    except Exception as e:
+        logger.error(f"Error saving draft for user {user_id}: {e}")
 
 def load_draft(user_id):
-    row = cursor.execute("SELECT data FROM drafts WHERE user_id = ?", (user_id,)).fetchone()
-    return json.loads(row[0]) if row else {}
+    try:
+        row = cursor.execute("SELECT data FROM drafts WHERE user_id = ?", (user_id,)).fetchone()
+        return json.loads(row[0]) if row else {}
+    except Exception as e:
+        logger.error(f"Error loading draft for user {user_id}: {e}")
+        return {}
 
 def delete_draft(user_id):
-    cursor.execute("DELETE FROM drafts WHERE user_id = ?", (user_id,))
-    db.commit()
+    try:
+        cursor.execute("DELETE FROM drafts WHERE user_id = ?", (user_id,))
+        db.commit()
+    except Exception as e:
+        logger.error(f"Error deleting draft for user {user_id}: {e}")
+
+def clear_user_data(context: ContextTypes.DEFAULT_TYPE):
+    """Безопасная очистка данных пользователя"""
+    keys_to_remove = ['category', 'budget', 'priority', 'used', 'models', '_last_step', 
+                     'editing_index', 'chat_user_id', 'chat_request_id', 'feedback_request_id']
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
 
 # ---------- ИНЛАЙН-КЛАВИАТУРЫ ----------
 def categories_inline(user_id):
@@ -802,7 +822,7 @@ def generate_post(article, index, total, source_name):
     
     separator = "━━━━━━━━━━━━━━━━━━━━━━"
     
-    post = f"🔹 **{formatted_title}**\n\n"
+    post = f"🔹 *{formatted_title}*\n\n"
     if formatted_desc:
         post += f"{formatted_desc}\n\n"
     post += f"🔗 [Подробнее]({link})\n\n"
@@ -820,12 +840,25 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
-    # Очищаем данные
-    context.user_data.clear()
+    # Очищаем данные пользователя
+    clear_user_data(context)
     
     cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
                    (user_id, update.message.from_user.username or '', user_name))
     db.commit()
+    
+    # Проверяем наличие черновика
+    draft = load_draft(user_id)
+    if draft:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(get_text(user_id, 'draft_continue'), callback_data="continue_draft")],
+            [InlineKeyboardButton(get_text(user_id, 'draft_delete'), callback_data="delete_draft")]
+        ])
+        await update.message.reply_text(
+            get_text(user_id, 'draft_found'),
+            reply_markup=keyboard
+        )
+        return CATEGORY
     
     delete_draft(user_id)
     
@@ -850,6 +883,8 @@ async def delete_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = query.from_user.id
     
     delete_draft(user_id)
+    clear_user_data(context)
+    
     await query.edit_message_text("✅ Черновик удалён. Начинаем заново.")
     
     user_name = query.from_user.first_name or ""
@@ -875,14 +910,17 @@ async def continue_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
     draft = load_draft(user_id)
     if not draft:
         await query.edit_message_text("❌ Черновик не найден")
-        return
+        return CATEGORY
     
+    # Восстанавливаем данные из черновика
     for key, value in draft.items():
-        context.user_data[key] = value
+        if key != '_last_step':  # Не восстанавливаем служебные ключи
+            context.user_data[key] = value
     
     await query.edit_message_text("📝 Продолжаем оформление заявки...")
     
     last_step = draft.get('_last_step', 'category')
+    
     if last_step == 'category':
         await query.message.reply_text(
             f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
@@ -930,6 +968,9 @@ async def continue_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=models_inline(user_id)
         )
         return MODELS
+    elif last_step == 'confirm':
+        await show_confirm(query, context, user_id)
+        return CONFIRM
 
 async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1098,6 +1139,7 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif query.data == "home":
         delete_draft(user_id)
+        clear_user_data(context)
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
@@ -1154,6 +1196,7 @@ async def handle_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     elif action == "home":
         delete_draft(user_id)
+        clear_user_data(context)
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
@@ -1169,6 +1212,7 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if action == "home":
         delete_draft(user_id)
+        clear_user_data(context)
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
@@ -1248,6 +1292,7 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).fetchone()[0]
     
     delete_draft(user_id)
+    clear_user_data(context)
     
     await update.message.reply_text(
         get_text(user_id, 'request_accepted'),
@@ -1260,7 +1305,7 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     admin_text = (
-        f"🔥 **Новая заявка!**\n\n"
+        f"🔥 *Новая заявка!*\n\n"
         f"📋 № заявки: {request_number}\n"
         f"👤 @{update.message.from_user.username or 'Нет юзернейма'}\n"
         f"🆔 {user_id}\n\n"
@@ -1292,7 +1337,7 @@ async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE
     action = query.data
     
     if action == "new_request":
-        context.user_data.clear()
+        clear_user_data(context)
         await query.edit_message_text(
             f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
             f"{get_text(user_id, 'choose_category')}",
@@ -1319,7 +1364,7 @@ async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE
         for req in requests:
             status = get_status_emoji(req[3])
             date = req[4][:10] if req[4] else 'Дата неизвестна'
-            text += f"#{req[1]} {status} **{req[2]}**\n"
+            text += f"#{req[1]} {status} *{req[2]}*\n"
             text += f"   📅 {date} | {get_status_text(req[3], user_id)}\n"
             text += f"   💰 {req[5]}\n"
             if req[6] and req[6] != "Не требуется":
@@ -1346,6 +1391,7 @@ async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE
         return AFTER_SUBMIT
     
     elif action == "home":
+        clear_user_data(context)
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
@@ -1441,6 +1487,8 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     elif query.data == "home":
+        delete_draft(user_id)
+        clear_user_data(context)
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
@@ -1526,6 +1574,7 @@ async def handle_feedback_text(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 async def request_feedback(request_id, user_id):
+    bot = Application.builder().token(TOKEN).build().bot
     await bot.send_message(
         user_id,
         get_text(user_id, 'feedback_request'),
@@ -1556,12 +1605,14 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
     
     status_emoji = get_status_emoji(new_status)
     status_text = get_status_text(new_status, user_id)
-    await query.get_bot().send_message(
+    bot = Application.builder().token(TOKEN).build().bot
+    
+    await bot.send_message(
         user_id,
         get_text(user_id, 'status_updated', status=f"{status_emoji} {status_text}")
     )
     
-    await query.get_bot().send_message(
+    await bot.send_message(
         user_id,
         get_text(user_id, 'contact_admin_text'),
         reply_markup=InlineKeyboardMarkup([
@@ -1614,6 +1665,7 @@ async def contact_direct(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     delete_draft(user_id)
+    clear_user_data(context)
     await update.message.reply_text("❌ Действие отменено.", reply_markup=remove_keyboard())
     return ConversationHandler.END
 
@@ -1687,7 +1739,7 @@ async def send_post_to_admin(update, context, index):
     post = posts[index]
     total = len(posts)
     
-    text = f"📝 **Пост {index + 1} из {total}**\n\n"
+    text = f"📝 *Пост {index + 1} из {total}*\n\n"
     text += post['text']
     
     keyboard = InlineKeyboardMarkup([
@@ -1751,8 +1803,9 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     elif action.startswith('edit_'):
         index = int(action.split('_')[1])
         context.user_data['editing_index'] = index
+        context.user_data['editing_type'] = 'news'
         
-        await query.message.reply_text(get_text(user_id, 'edit_post'))
+        await query.message.reply_text(get_text(user_id, 'edit_post'), parse_mode="Markdown")
         return
     
     elif action.startswith('prev_'):
@@ -1792,7 +1845,7 @@ async def send_post_to_admin_by_query(query, index):
     post = posts[index]
     total = len(posts)
     
-    text = f"📝 **Пост {index + 1} из {total}**\n\n"
+    text = f"📝 *Пост {index + 1} из {total}*\n\n"
     text += post['text']
     
     keyboard = InlineKeyboardMarkup([
@@ -1810,19 +1863,25 @@ async def send_post_to_admin_by_query(query, index):
 
 async def handle_edit_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    editing_index = context.user_data.get('editing_index', 0)
-    data = pending_posts.get(user_id, {})
-    posts = data.get('posts', [])
+    editing_type = context.user_data.get('editing_type')
     
-    if not posts or editing_index >= len(posts):
-        await update.message.reply_text(get_text(user_id, 'post_not_found'))
-        return
-    
-    posts[editing_index]['text'] = update.message.text
-    pending_posts[user_id] = data
-    
-    await update.message.reply_text(get_text(user_id, 'post_updated'))
-    await send_post_to_admin(update, context, editing_index)
+    if editing_type == 'news':
+        editing_index = context.user_data.get('editing_index', 0)
+        data = pending_posts.get(user_id, {})
+        posts = data.get('posts', [])
+        
+        if not posts or editing_index >= len(posts):
+            await update.message.reply_text(get_text(user_id, 'post_not_found'))
+            return
+        
+        posts[editing_index]['text'] = update.message.text
+        pending_posts[user_id] = data
+        
+        await update.message.reply_text(get_text(user_id, 'post_updated'))
+        await send_post_to_admin(update, context, editing_index)
+    else:
+        # Это чат с пользователем
+        await handle_admin_chat(update, context)
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
@@ -1895,7 +1954,8 @@ async def admin_recent_refresh(update: Update, context: ContextTypes.DEFAULT_TYP
 async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await admin(query.message)
+    # Возвращаемся к админ-панели
+    await admin(query.message, context)
 
 async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
@@ -1916,6 +1976,8 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         FROM requests 
         ORDER BY created_at DESC
     """).fetchall()
+    
+    from telegram import FSInputFile
     
     filename = f"export_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
     
@@ -1970,13 +2032,14 @@ async def handle_request_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = request_data[0]
     context.user_data['chat_user_id'] = user_id
     context.user_data['chat_request_id'] = request_id
+    context.user_data['editing_type'] = 'chat'
     
     await query.edit_message_text(
-        f"💬 **Чат с пользователем (заявка #{request_id})**\n\n"
+        f"💬 *Чат с пользователем (заявка #{request_id})*\n\n"
         "Напишите сообщение, которое будет отправлено пользователю.\n"
         "Для отмены отправьте /cancel"
     )
-    return EDITING_POST
+    return ADMIN_CHAT
 
 async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -1993,6 +2056,18 @@ async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Сообщение отправлено!")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
+
+async def handle_user_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик сообщений от пользователя в админский чат"""
+    user_id = update.message.from_user.id
+    if user_id == ADMIN_ID:
+        return
+    
+    # Отправляем сообщение админу
+    await update.get_bot().send_message(
+        ADMIN_ID,
+        f"💬 Сообщение от пользователя @{update.message.from_user.username or 'без юзернейма'} (ID: {user_id}):\n\n{update.message.text}"
+    )
 
 # ---------- ЗАПУСК ----------
 async def main():
@@ -2048,6 +2123,10 @@ async def main():
                 CommandHandler('cancel', cancel)
             ],
             EDITING_POST: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_post),
+                CommandHandler('cancel', cancel)
+            ],
+            ADMIN_CHAT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_post),
                 CommandHandler('cancel', cancel)
             ],
