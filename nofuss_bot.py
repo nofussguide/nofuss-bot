@@ -816,6 +816,7 @@ def generate_post(article, index, total, source_name):
 
 # ---------- ОБРАБОТЧИКИ ----------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
