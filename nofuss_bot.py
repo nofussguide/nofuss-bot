@@ -868,35 +868,30 @@ def run_health_server():
 
 # ---------- ОБРАБОТЧИКИ ----------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
+    """Обработчик команды /start - полный сброс состояния"""
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
-    # Полная очистка данных пользователя и сброс состояния
+    # 1. Очищаем user_data
     clear_user_data(context)
     
-    # Принудительно завершаем все активные диалоги
+    # 2. Принудительное завершение ConversationHandler
     if context.user_data:
         context.user_data.clear()
     
+    # 3. Очищаем chat_data (дополнительный способ)
+    if context.chat_data:
+        context.chat_data.clear()
+    
+    # 4. Удаляем черновик из БД
+    delete_draft(user_id)
+    
+    # 5. Регистрируем пользователя
     cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
                    (user_id, update.message.from_user.username or '', user_name))
     db.commit()
     
-    draft = load_draft(user_id)
-    if draft:
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(get_text(user_id, 'draft_continue'), callback_data="continue_draft")],
-            [InlineKeyboardButton(get_text(user_id, 'draft_delete'), callback_data="delete_draft")]
-        ])
-        await update.message.reply_text(
-            get_text(user_id, 'draft_found'),
-            reply_markup=keyboard
-        )
-        return CATEGORY
-    
-    delete_draft(user_id)
-    
+    # 6. Отправляем приветственное сообщение
     await update.message.reply_text(
         f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
         f"📱 {get_text(user_id, 'choose_category')}",
@@ -904,11 +899,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=remove_keyboard()
     )
     
+    # 7. Отправляем сообщение с выбором категории
     await update.message.reply_text(
         f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
         f"{get_text(user_id, 'choose_category')}",
         reply_markup=categories_inline(user_id)
     )
+    
+    # 8. Возвращаем состояние CATEGORY для начала диалога
     return CATEGORY
 
 async def delete_draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1726,6 +1724,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     delete_draft(user_id)
     clear_user_data(context)
     context.user_data.clear()
+    if context.chat_data:
+        context.chat_data.clear()
     await update.message.reply_text(
         "❌ Действие отменено. Напишите /start чтобы начать заново.",
         reply_markup=remove_keyboard()
@@ -1739,6 +1739,10 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Если это команда /start, передаём её в start_command
     if update.message.text and update.message.text.startswith('/'):
         if update.message.text == '/start':
+            clear_user_data(context)
+            context.user_data.clear()
+            if context.chat_data:
+                context.chat_data.clear()
             return await start_command(update, context)
         return
     
@@ -2151,7 +2155,7 @@ def main():
     # Создаем приложение
     application = Application.builder().token(TOKEN).build()
     
-    # Регистрируем обработчики
+    # Регистрируем обработчики с дополнительными параметрами
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_command)],
         states={
@@ -2208,6 +2212,8 @@ def main():
             ],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
+        per_message=False,
+        per_chat=False,
     )
     
     application.add_handler(conv_handler)
