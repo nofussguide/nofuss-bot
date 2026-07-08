@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
 UNSPLASH_ACCESS_KEY = "kPtZY-3eUqZh3Epo9iBbGufCXwyAPUyrZsR29B8j218"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://nofuss-bot.onrender.com")
 
 # ---------- БАЗА ДАННЫХ ----------
 db = sqlite3.connect("nofuss.db", check_same_thread=False)
@@ -648,14 +649,15 @@ def theme_select_inline(user_id):
     return InlineKeyboardMarkup(buttons)
 
 def feedback_inline(request_id, user_id):
+    """Клавиатура для отзыва с правильным форматом callback_data"""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ 1", callback_data=f"feedback_rating_{request_id}_1")],
-        [InlineKeyboardButton("⭐⭐ 2", callback_data=f"feedback_rating_{request_id}_2")],
-        [InlineKeyboardButton("⭐⭐⭐ 3", callback_data=f"feedback_rating_{request_id}_3")],
-        [InlineKeyboardButton("⭐⭐⭐⭐ 4", callback_data=f"feedback_rating_{request_id}_4")],
-        [InlineKeyboardButton("⭐⭐⭐⭐⭐ 5", callback_data=f"feedback_rating_{request_id}_5")],
-        [InlineKeyboardButton("✏️ Оставить текстовый отзыв", callback_data=f"feedback_text_{request_id}")],
-        [InlineKeyboardButton("❌ Пропустить", callback_data=f"feedback_skip_{request_id}")]
+        [InlineKeyboardButton("⭐ 1", callback_data=f"fb_rating_{request_id}_1")],
+        [InlineKeyboardButton("⭐⭐ 2", callback_data=f"fb_rating_{request_id}_2")],
+        [InlineKeyboardButton("⭐⭐⭐ 3", callback_data=f"fb_rating_{request_id}_3")],
+        [InlineKeyboardButton("⭐⭐⭐⭐ 4", callback_data=f"fb_rating_{request_id}_4")],
+        [InlineKeyboardButton("⭐⭐⭐⭐⭐ 5", callback_data=f"fb_rating_{request_id}_5")],
+        [InlineKeyboardButton("✏️ Оставить текстовый отзыв", callback_data=f"fb_text_{request_id}")],
+        [InlineKeyboardButton("❌ Пропустить", callback_data=f"fb_skip_{request_id}")]
     ])
 
 def contact_keyboard():
@@ -1518,29 +1520,38 @@ async def theme_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик кнопок отзыва"""
+    """Обработчик кнопок отзыва - исправлен для правильного формата"""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     
     try:
-        parts = query.data.split("_")
+        data = query.data
+        logger.info(f"Feedback callback data: {data}")
+        
+        # Формат: fb_rating_{request_id}_{rating} или fb_text_{request_id} или fb_skip_{request_id}
+        parts = data.split("_")
+        
         if len(parts) < 3:
             await query.edit_message_text("❌ Ошибка в данных отзыва")
             return ConversationHandler.END
         
+        action = parts[1]  # rating, text, или skip
         request_id = int(parts[2])
         
-        if parts[1] == "skip":
+        if action == "skip":
             await query.edit_message_text(get_text(user_id, 'feedback_skip'))
             return ConversationHandler.END
         
-        elif parts[1] == "text":
+        elif action == "text":
             await query.edit_message_text(get_text(user_id, 'feedback_text_prompt'))
             context.user_data['feedback_request_id'] = request_id
             return FEEDBACK_TEXT
         
-        elif parts[1] == "rating":
+        elif action == "rating":
+            if len(parts) < 4:
+                await query.edit_message_text("❌ Ошибка: не указана оценка")
+                return ConversationHandler.END
             rating = int(parts[3])
             cursor.execute("""
                 INSERT INTO feedback(request_id, user_id, rating)
@@ -2090,11 +2101,17 @@ async def main():
     
     app = Application.builder().token(TOKEN).build()
     
+    # Получаем порт из переменной окружения Render
+    port = int(os.environ.get("PORT", 10000))
+    
     try:
-        await app.bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook deleted successfully")
+        # Устанавливаем вебхук
+        webhook_url = f"{WEBHOOK_URL}/webhook"
+        await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+        logger.info(f"Webhook set to {webhook_url}")
     except Exception as e:
-        logger.warning(f"Error deleting webhook: {e}")
+        logger.error(f"Error setting webhook: {e}")
+        return
     
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_command)],
@@ -2136,7 +2153,7 @@ async def main():
                 CallbackQueryHandler(handle_after_submit, pattern="^(new_request|my_requests|contact_admin|home)$")
             ],
             FEEDBACK: [
-                CallbackQueryHandler(handle_feedback, pattern="^feedback_")
+                CallbackQueryHandler(handle_feedback, pattern="^fb_")
             ],
             FEEDBACK_TEXT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_feedback_text),
@@ -2179,14 +2196,22 @@ async def main():
     app.add_handler(MessageHandler(filters.Regex('💬 Связаться'), contact_direct))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
     
-    logger.info("Bot started successfully!")
+    logger.info(f"Bot started successfully on port {port}!")
     
     try:
         await app.initialize()
         await app.start()
-        await app.updater.start_polling()
-        logger.info("Polling started...")
         
+        # Запускаем вебхук
+        await app.updater.start_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path="webhook",
+            webhook_url=webhook_url
+        )
+        logger.info(f"Webhook listening on port {port}")
+        
+        # Держим бота активным
         while True:
             await asyncio.sleep(1)
     except (KeyboardInterrupt, SystemExit):
