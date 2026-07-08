@@ -2112,7 +2112,7 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 # ---------- ЗАПУСК ----------
-async def main():
+def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
@@ -2120,16 +2120,19 @@ async def main():
     port = int(os.environ.get("PORT", 10000))
     health_thread = threading.Thread(target=run_health_server, args=(port,), daemon=True)
     health_thread.start()
+    logger.info(f"Health check server started on port {port}")
     
-    app = Application.builder().token(TOKEN).build()
+    # Создаем приложение
+    application = Application.builder().token(TOKEN).build()
     
-    # Удаляем вебхук чтобы использовать polling
+    # Удаляем вебхук
     try:
-        await app.bot.delete_webhook(drop_pending_updates=True)
+        application.bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook deleted successfully")
     except Exception as e:
         logger.warning(f"Error deleting webhook: {e}")
     
+    # Регистрируем обработчики
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_command)],
         states={
@@ -2188,50 +2191,44 @@ async def main():
         fallbacks=[CommandHandler('cancel', cancel)],
     )
     
-    app.add_handler(conv_handler)
-    app.add_handler(CommandHandler('news_now', news_now))
-    app.add_handler(CommandHandler('admin', admin))
-    app.add_handler(CommandHandler('export', export_data))
-    app.add_handler(CommandHandler('stats', my_stats))
-    app.add_handler(CommandHandler('settings', settings))
-    app.add_handler(CommandHandler('about', about))
-    app.add_handler(CommandHandler('commands', commands_list))
-    app.add_handler(CommandHandler('faq', faq))
-    app.add_handler(CallbackQueryHandler(handle_post_callback, pattern="^(publish|edit|prev|next|refresh_news|close_news)"))
-    app.add_handler(CallbackQueryHandler(handle_request_status, pattern="^request_status_"))
-    app.add_handler(CallbackQueryHandler(handle_request_chat, pattern="^request_chat_"))
-    app.add_handler(CallbackQueryHandler(admin_recent, pattern="^admin_recent$"))
-    app.add_handler(CallbackQueryHandler(admin_recent_refresh, pattern="^admin_recent_refresh$"))
-    app.add_handler(CallbackQueryHandler(admin_back, pattern="^admin_back$"))
-    app.add_handler(CallbackQueryHandler(settings_callback, pattern="^(settings_lang|settings_theme|settings_back|share_bot|home)$"))
-    app.add_handler(CallbackQueryHandler(language_select, pattern="^lang_"))
-    app.add_handler(CallbackQueryHandler(theme_select, pattern="^theme_"))
-    app.add_handler(MessageHandler(filters.Regex('❓ FAQ'), faq))
-    app.add_handler(MessageHandler(filters.Regex('⚙️ Настройки'), settings))
-    app.add_handler(MessageHandler(filters.Regex('📊 Моя статистика'), my_stats))
-    app.add_handler(MessageHandler(filters.Regex('ℹ️ О проекте'), about))
-    app.add_handler(MessageHandler(filters.Regex('💬 Связаться'), contact_direct))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
+    application.add_handler(conv_handler)
+    application.add_handler(CommandHandler('news_now', news_now))
+    application.add_handler(CommandHandler('admin', admin))
+    application.add_handler(CommandHandler('export', export_data))
+    application.add_handler(CommandHandler('stats', my_stats))
+    application.add_handler(CommandHandler('settings', settings))
+    application.add_handler(CommandHandler('about', about))
+    application.add_handler(CommandHandler('commands', commands_list))
+    application.add_handler(CommandHandler('faq', faq))
+    application.add_handler(CallbackQueryHandler(handle_post_callback, pattern="^(publish|edit|prev|next|refresh_news|close_news)"))
+    application.add_handler(CallbackQueryHandler(handle_request_status, pattern="^request_status_"))
+    application.add_handler(CallbackQueryHandler(handle_request_chat, pattern="^request_chat_"))
+    application.add_handler(CallbackQueryHandler(admin_recent, pattern="^admin_recent$"))
+    application.add_handler(CallbackQueryHandler(admin_recent_refresh, pattern="^admin_recent_refresh$"))
+    application.add_handler(CallbackQueryHandler(admin_back, pattern="^admin_back$"))
+    application.add_handler(CallbackQueryHandler(settings_callback, pattern="^(settings_lang|settings_theme|settings_back|share_bot|home)$"))
+    application.add_handler(CallbackQueryHandler(language_select, pattern="^lang_"))
+    application.add_handler(CallbackQueryHandler(theme_select, pattern="^theme_"))
+    application.add_handler(MessageHandler(filters.Regex('❓ FAQ'), faq))
+    application.add_handler(MessageHandler(filters.Regex('⚙️ Настройки'), settings))
+    application.add_handler(MessageHandler(filters.Regex('📊 Моя статистика'), my_stats))
+    application.add_handler(MessageHandler(filters.Regex('ℹ️ О проекте'), about))
+    application.add_handler(MessageHandler(filters.Regex('💬 Связаться'), contact_direct))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
     
-    logger.info("Bot started successfully!")
+    logger.info("Bot started successfully! Starting polling...")
     
-    try:
-        await app.initialize()
-        await app.start()
-        await app.updater.start_polling()
-        logger.info("Polling started...")
-        
-        while True:
-            await asyncio.sleep(1)
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Shutting down gracefully...")
-    finally:
-        await app.stop()
-        logger.info("Bot stopped")
+    # Запускаем polling
+    application.run_polling(
+        poll_interval=1.0,
+        timeout=10,
+        read_timeout=2,
+        drop_pending_updates=True
+    )
 
 if __name__ == '__main__':
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
