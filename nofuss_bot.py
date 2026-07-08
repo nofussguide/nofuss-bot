@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
 UNSPLASH_ACCESS_KEY = "kPtZY-3eUqZh3Epo9iBbGufCXwyAPUyrZsR29B8j218"
+
+# Получаем WEBHOOK_URL из переменных окружения
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # Если WEBHOOK_URL не задан, формируем из RENDER_EXTERNAL_URL
@@ -2102,16 +2104,16 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 # ---------- ЗАПУСК ----------
-async def main():
+def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
     # Создаем приложение
     application = Application.builder().token(TOKEN).build()
     
-    # Удаляем вебхук и устанавливаем новый
+    # Удаляем вебхук
     try:
-        await application.bot.delete_webhook(drop_pending_updates=True)
+        application.bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook deleted successfully")
     except Exception as e:
         logger.warning(f"Error deleting webhook: {e}")
@@ -2205,51 +2207,17 @@ async def main():
     # Получаем порт
     port = int(os.environ.get("PORT", 10000))
     
-    # Запускаем вебхук
-    try:
-        webhook_url = f"{WEBHOOK_URL}/webhook"
-        await application.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-        logger.info(f"Webhook set to {webhook_url}")
-        
-        # Запускаем приложение с вебхуком
-        await application.initialize()
-        await application.start()
-        await application.updater.start_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="webhook",
-            webhook_url=webhook_url
-        )
-        logger.info(f"Webhook listening on port {port}")
-        
-        # Держим бота активным
-        while True:
-            await asyncio.sleep(1)
-            
-    except Exception as e:
-        logger.error(f"Error starting webhook: {e}")
-        # Если вебхук не работает, пробуем polling как запасной вариант
-        logger.info("Falling back to polling...")
-        try:
-            await application.updater.start_polling(
-                poll_interval=1.0,
-                timeout=10,
-                read_timeout=2,
-                drop_pending_updates=True
-            )
-            logger.info("Polling started as fallback")
-            while True:
-                await asyncio.sleep(1)
-        except Exception as e2:
-            logger.error(f"Fatal error: {e2}")
-            raise
-    finally:
-        await application.stop()
-        logger.info("Bot stopped")
+    # Запускаем polling (самый стабильный способ)
+    application.run_polling(
+        poll_interval=1.0,
+        timeout=10,
+        read_timeout=2,
+        drop_pending_updates=True
+    )
 
 if __name__ == '__main__':
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
