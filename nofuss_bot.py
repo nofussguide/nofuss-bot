@@ -196,8 +196,7 @@ TRANSLATIONS = {
         'models_label': "Модели",
         'contact_label': "Контакт",
         'status_label': "Статус",
-        'confirm_date': "Дата подтверждения",
-        'admin_comment': "Комментарий админа"
+        'confirm_date': "Дата подтверждения"
     },
     'en': {
         'welcome': "👋 Welcome to NoFuss Guide!\n\n🔍 The bot collects your preferences, and a specialist makes the selection.\n\n📋 Type /commands to see all available commands.",
@@ -293,8 +292,7 @@ TRANSLATIONS = {
         'models_label': "Models",
         'contact_label': "Contact",
         'status_label': "Status",
-        'confirm_date': "Confirm date",
-        'admin_comment': "Admin comment"
+        'confirm_date': "Confirm date"
     },
     'kk': {
         'welcome': "👋 NoFuss Guide-ге қош келдіңіз!\n\n🔍 Бот сіздің тілектеріңізді жинайды, ал таңдауды маман жасайды.\n\n📋 Барлық қолжетімді командаларды көру үшін /commands жазыңыз.",
@@ -390,8 +388,7 @@ TRANSLATIONS = {
         'models_label': "Модельдер",
         'contact_label': "Байланыс",
         'status_label': "Мәртебе",
-        'confirm_date': "Растау күні",
-        'admin_comment': "Админ пікірі"
+        'confirm_date': "Растау күні"
     }
 }
 
@@ -804,7 +801,6 @@ def generate_post(article, index, total, source_name):
     formatted_title = format_paragraph(title_ru, width=50)
     formatted_desc = format_paragraph(desc_ru, width=50) if desc_ru else ''
     
-    # Красивый разделитель
     separator = "━━━━━━━━━━━━━━━━━━━━━━"
     
     post = f"🔹 **{formatted_title}**\n\n"
@@ -819,27 +815,22 @@ def generate_post(article, index, total, source_name):
     image_url = get_news_image(title_ru)
     return {'text': post, 'image': image_url}
 
-# ---------- ОБРАБОТЧИКИ ЗАЯВОК ----------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- ОТДЕЛЬНЫЙ ОБРАБОТЧИК /start ----------
+@dp.message(Command("start"))
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отдельный обработчик для /start, который работает всегда"""
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
+    # Очищаем всё состояние
+    await context.reset()
     context.user_data.clear()
+    
     cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
                    (user_id, update.message.from_user.username or '', user_name))
     db.commit()
     
-    # Проверяем черновик
-    draft = load_draft(user_id)
-    if draft:
-        await update.message.reply_text(
-            get_text(user_id, 'draft_found'),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(get_text(user_id, 'draft_continue'), callback_data="continue_draft")],
-                [InlineKeyboardButton(get_text(user_id, 'draft_delete'), callback_data="delete_draft")]
-            ])
-        )
-        return
+    delete_draft(user_id)
     
     await update.message.reply_text(
         f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
@@ -1640,8 +1631,14 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Действие отменено.", reply_markup=remove_keyboard())
     return ConversationHandler.END
 
+# ---------- FALLBACK С ОБРАБОТКОЙ /start ----------
 async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
+    
+    # Если пользователь ввел /start, обрабатываем отдельно
+    if update.message.text == '/start':
+        return await start_command(update, context)
+    
     await update.message.reply_text(
         get_text(user_id, 'fallback_text'),
         reply_markup=remove_keyboard()
@@ -2022,7 +2019,7 @@ async def main():
     app = Application.builder().token(TOKEN).build()
     
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
+        entry_points=[CommandHandler('start', start_command)],
         states={
             CATEGORY: [
                 CallbackQueryHandler(handle_category, pattern="^cat_"),
