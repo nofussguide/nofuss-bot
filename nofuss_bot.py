@@ -2,7 +2,8 @@ import asyncio
 import os
 import sqlite3
 # ... другие импорты ...
-
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
 
