@@ -34,7 +34,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
 UNSPLASH_ACCESS_KEY = "kPtZY-3eUqZh3Epo9iBbGufCXwyAPUyrZsR29B8j218"
 
-# Получаем WEBHOOK_URL из переменных окружения
+# Получаем WEBHOOK_URL из переменных окружения (оставлено для обратной совместимости)
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # Если WEBHOOK_URL не задан, формируем из RENDER_EXTERNAL_URL
@@ -2203,9 +2203,6 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
     
     logger.info("Bot started successfully!")
-    
-    # Получаем порт
-    port = int(os.environ.get("PORT", 10000))
     
     # Запускаем polling (самый стабильный способ)
     application.run_polling(
