@@ -820,7 +820,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
-    # Убираем context.reset() - его нет в python-telegram-bot
+    # Очищаем данные
     context.user_data.clear()
     
     cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
@@ -843,6 +843,30 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return CATEGORY
 
+async def delete_draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик для кнопки 'Начать заново' - удаляет черновик"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    delete_draft(user_id)
+    await query.edit_message_text("✅ Черновик удалён. Начинаем заново.")
+    
+    user_name = query.from_user.first_name or ""
+    await query.message.reply_text(
+        f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
+        f"📱 {get_text(user_id, 'choose_category')}",
+        parse_mode="Markdown"
+    )
+    
+    await query.message.reply_text(
+        f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
+        f"{get_text(user_id, 'choose_category')}",
+        reply_markup=categories_inline(user_id)
+    )
+    return CATEGORY
+
+# ---------- ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ----------
 async def continue_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -906,28 +930,6 @@ async def continue_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=models_inline(user_id)
         )
         return MODELS
-
-async def delete_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    delete_draft(user_id)
-    await query.edit_message_text("✅ Черновик удалён. Начинаем заново.")
-    
-    user_name = query.from_user.first_name or ""
-    await query.message.reply_text(
-        f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
-        f"📱 {get_text(user_id, 'choose_category')}",
-        parse_mode="Markdown"
-    )
-    
-    await query.message.reply_text(
-        f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
-        f"{get_text(user_id, 'choose_category')}",
-        reply_markup=categories_inline(user_id)
-    )
-    return CATEGORY
 
 async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2006,7 +2008,7 @@ async def main():
                 CallbackQueryHandler(handle_category, pattern="^cat_"),
                 CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_categories)$"),
                 CallbackQueryHandler(continue_draft, pattern="^continue_draft$"),
-                CallbackQueryHandler(delete_draft, pattern="^delete_draft$")
+                CallbackQueryHandler(delete_draft_callback, pattern="^delete_draft$")
             ],
             BUDGET: [
                 CallbackQueryHandler(handle_budget, pattern="^budget_"),
