@@ -872,7 +872,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
+    # Полная очистка данных пользователя и сброс состояния
     clear_user_data(context)
+    
+    # Принудительно завершаем все активные диалоги
+    if context.user_data:
+        context.user_data.clear()
     
     cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
                    (user_id, update.message.from_user.username or '', user_name))
@@ -1716,20 +1721,30 @@ async def contact_direct(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("💬 Написать напрямую: @goojifeed")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /cancel - полный сброс"""
     user_id = update.message.from_user.id
     delete_draft(user_id)
     clear_user_data(context)
-    await update.message.reply_text("❌ Действие отменено.", reply_markup=remove_keyboard())
+    context.user_data.clear()
+    await update.message.reply_text(
+        "❌ Действие отменено. Напишите /start чтобы начать заново.",
+        reply_markup=remove_keyboard()
+    )
     return ConversationHandler.END
 
 async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик для всего остального текста"""
     user_id = update.message.from_user.id
     
+    # Если это команда /start, передаём её в start_command
     if update.message.text and update.message.text.startswith('/'):
+        if update.message.text == '/start':
+            return await start_command(update, context)
         return
     
+    # Если пользователь ввёл текст вне диалога, предлагаем начать заново
     await update.message.reply_text(
-        get_text(user_id, 'fallback_text'),
+        "ℹ️ Чтобы начать оформление заявки, напишите /start",
         reply_markup=remove_keyboard()
     )
 
