@@ -914,7 +914,7 @@ async def continue_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Восстанавливаем данные из черновика
     for key, value in draft.items():
-        if key != '_last_step':  # Не восстанавливаем служебные ключи
+        if key != '_last_step':
             context.user_data[key] = value
     
     await query.edit_message_text("📝 Продолжаем оформление заявки...")
@@ -1642,7 +1642,7 @@ async def commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = get_text(user_id, 'commands_list')
     await update.message.reply_text(
         text,
-        parse_mode=None,  # Отключаем Markdown чтобы избежать проблем с форматированием
+        parse_mode=None,
         reply_markup=remove_keyboard()
     )
 
@@ -1658,6 +1658,7 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     await update.message.reply_text(
         get_text(user_id, 'faq_text'),
+        parse_mode=None,
         reply_markup=remove_keyboard()
     )
 
@@ -1674,8 +1675,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     
-    if update.message.text == '/start':
-        return await start_command(update, context)
+    # Пропускаем команды, чтобы они обрабатывались CommandHandler
+    if update.message.text and update.message.text.startswith('/'):
+        return
     
     await update.message.reply_text(
         get_text(user_id, 'fallback_text'),
@@ -1956,7 +1958,6 @@ async def admin_recent_refresh(update: Update, context: ContextTypes.DEFAULT_TYP
 async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    # Возвращаемся к админ-панели
     await admin(query.message, context)
 
 async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2065,7 +2066,6 @@ async def handle_user_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id == ADMIN_ID:
         return
     
-    # Отправляем сообщение админу
     await update.get_bot().send_message(
         ADMIN_ID,
         f"💬 Сообщение от пользователя @{update.message.from_user.username or 'без юзернейма'} (ID: {user_id}):\n\n{update.message.text}"
