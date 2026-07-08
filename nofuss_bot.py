@@ -1,5 +1,29 @@
 import asyncio
 import os
+import sqlite3
+# ... другие импорты ...
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = 479330946
+
+# Создаём экземпляры бота и диспетчера
+bot = Bot(token=TOKEN)
+dp = Dispatcher()  # Для aiogram 3.x
+
+# ... все ваши обработчики (@dp.message, @dp.callback_query) ...
+После добавления этой строки ошибка NameError: name 'dp' is not defined исчезнет, и бот сможет запуститься.
+
+⚠️ Важно про PORT
+В логах также есть предупреждение No open ports detected. Это нормально для ботов, которые работают в режиме polling (опрос сервера Telegram). Если вы не используете веб-сервер (например, для вебхуков), это предупреждение можно игнорировать. Ваш бот будет работать через long polling.
+
+После исправления dp закоммитьте и отправьте изменения на GitHub. Деплой на Render должен пройти успешно.
+
+кинь мне тогда полностью исправленный код и добавь снова в приветственное сообщение после start команду commands и что итоговый подбор осуществляет специалист. Также верни работу команды /news_now, потому что она перестала работать как и команда /commands
+python
+import asyncio
+import os
 import time
 import sqlite3
 import csv
@@ -18,6 +42,9 @@ import textwrap
 
 # Для перевода
 from deep_translator import GoogleTranslator
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -93,17 +120,13 @@ END;
 """)
 db.commit()
 
-# ---------- ИМПОРТЫ ДЛЯ TELEGRAM ----------
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
-
 # ---------- СОСТОЯНИЯ ----------
 CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING_POST, AFTER_SUBMIT, FEEDBACK, FEEDBACK_TEXT = range(12)
 
 # ---------- МУЛЬТИЯЗЫЧНОСТЬ ----------
 TRANSLATIONS = {
     'ru': {
-        'welcome': "👋 Добро пожаловать в NoFuss Guide!\n\n🔍 Бот собирает ваши пожелания, а подбор делает специалист.\n\n📋 Напишите /commands чтобы увидеть все доступные команды.",
+        'welcome': "👋 Добро пожаловать в NoFuss Guide!\n\n🔍 Бот собирает ваши пожелания, а итоговый подбор осуществляет специалист.\n\n📋 Напишите /commands чтобы увидеть все доступные команды.",
         'choose_category': "📱 Выберите категорию техники:",
         'choose_budget': "💰 Выберите бюджет:",
         'choose_priority': "🎯 Что для вас наиболее важно?",
@@ -154,8 +177,8 @@ TRANSLATIONS = {
         'settings_title': "⚙️ **Настройки**\n\nВыберите раздел для настройки:",
         'settings_lang': "🌐 **Выберите язык:**",
         'settings_theme': "🎨 **Выберите тему:**",
-        'about_text': "ℹ️ **О проекте NoFuss Guide**\n\n🤖 Бот собирает ваши пожелания, а подбор делает специалист.\n\n📅 Версия: 2.0\n📧 Контакты: @goojifeed\n📢 Канал: @NoFussGuide\n\nСпасибо, что пользуетесь нашим сервисом! 🙏",
-        'commands_list': "📋 **Список команд**\n\n/start - Начать оформление заявки\n/stats - Моя статистика\n/settings - Настройки\n/faq - Частые вопросы\n/about - О проекте\n/commands - Список команд\n/cancel - Отменить действие",
+        'about_text': "ℹ️ **О проекте NoFuss Guide**\n\n🤖 Бот собирает ваши пожелания, а итоговый подбор осуществляет специалист.\n\n📅 Версия: 2.0\n📧 Контакты: @goojifeed\n📢 Канал: @NoFussGuide\n\nСпасибо, что пользуетесь нашим сервисом! 🙏",
+        'commands_list': "📋 **Список команд**\n\n/start - Начать оформление заявки\n/stats - Моя статистика\n/settings - Настройки\n/faq - Частые вопросы\n/about - О проекте\n/commands - Список команд\n/cancel - Отменить действие\n/news_now - Собрать новости (только для админа)",
         'faq_text': "❓ Частые вопросы\n\n• Как быстро отвечаем? — В течение дня\n• Подбираете б/у? — Да\n• Стоимость? — Обсуждается индивидуально 🤝\n• Какие бренды? — Любые достойные варианты\n• Как оставить отзыв? — После выполнения заявки появится кнопка",
         'contact_direct': "💬 Написать напрямую: @goojifeed",
         'fallback_text': "Используйте кнопки меню 👇",
@@ -199,7 +222,7 @@ TRANSLATIONS = {
         'confirm_date': "Дата подтверждения"
     },
     'en': {
-        'welcome': "👋 Welcome to NoFuss Guide!\n\n🔍 The bot collects your preferences, and a specialist makes the selection.\n\n📋 Type /commands to see all available commands.",
+        'welcome': "👋 Welcome to NoFuss Guide!\n\n🔍 The bot collects your preferences, and a specialist makes the final selection.\n\n📋 Type /commands to see all available commands.",
         'choose_category': "📱 Choose a category:",
         'choose_budget': "💰 Choose your budget:",
         'choose_priority': "🎯 What matters most to you?",
@@ -250,8 +273,8 @@ TRANSLATIONS = {
         'settings_title': "⚙️ **Settings**\n\nSelect a section to configure:",
         'settings_lang': "🌐 **Select language:**",
         'settings_theme': "🎨 **Select theme:**",
-        'about_text': "ℹ️ **About NoFuss Guide**\n\n🤖 The bot collects your preferences, and a specialist makes the selection.\n\n📅 Version: 2.0\n📧 Contacts: @goojifeed\n📢 Channel: @NoFussGuide\n\nThank you for using our service! 🙏",
-        'commands_list': "📋 **Commands list**\n\n/start - Start a request\n/stats - My statistics\n/settings - Settings\n/faq - FAQ\n/about - About project\n/commands - Commands list\n/cancel - Cancel action",
+        'about_text': "ℹ️ **About NoFuss Guide**\n\n🤖 The bot collects your preferences, and a specialist makes the final selection.\n\n📅 Version: 2.0\n📧 Contacts: @goojifeed\n📢 Channel: @NoFussGuide\n\nThank you for using our service! 🙏",
+        'commands_list': "📋 **Commands list**\n\n/start - Start a request\n/stats - My statistics\n/settings - Settings\n/faq - FAQ\n/about - About project\n/commands - Commands list\n/cancel - Cancel action\n/news_now - Collect news (admin only)",
         'faq_text': "❓ FAQ\n\n• How fast do we respond? — Within a day\n• Do you consider used devices? — Yes\n• Cost? — Discussed individually 🤝\n• Which brands? — Any worthy options\n• How to leave feedback? — After request completion, a button will appear",
         'contact_direct': "💬 Contact directly: @goojifeed",
         'fallback_text': "Use the menu buttons 👇",
@@ -295,7 +318,7 @@ TRANSLATIONS = {
         'confirm_date': "Confirm date"
     },
     'kk': {
-        'welcome': "👋 NoFuss Guide-ге қош келдіңіз!\n\n🔍 Бот сіздің тілектеріңізді жинайды, ал таңдауды маман жасайды.\n\n📋 Барлық қолжетімді командаларды көру үшін /commands жазыңыз.",
+        'welcome': "👋 NoFuss Guide-ге қош келдіңіз!\n\n🔍 Бот сіздің тілектеріңізді жинайды, ал нақты таңдауды маман жасайды.\n\n📋 Барлық қолжетімді командаларды көру үшін /commands жазыңыз.",
         'choose_category': "📱 Техника санатын таңдаңыз:",
         'choose_budget': "💰 Бюджетіңізді таңдаңыз:",
         'choose_priority': "🎯 Сіз үшін ең маңыздысы не?",
@@ -346,8 +369,8 @@ TRANSLATIONS = {
         'settings_title': "⚙️ **Баптаулар**\n\nБаптау үшін бөлімді таңдаңыз:",
         'settings_lang': "🌐 **Тілді таңдаңыз:**",
         'settings_theme': "🎨 **Тақырыпты таңдаңыз:**",
-        'about_text': "ℹ️ **NoFuss Guide жобасы туралы**\n\n🤖 Бот сіздің тілектеріңізді жинайды, ал таңдауды маман жасайды.\n\n📅 Нұсқа: 2.0\n📧 Байланыс: @goojifeed\n📢 Арна: @NoFussGuide\n\nБіздің сервисті пайдаланғаныңыз үшін рахмет! 🙏",
-        'commands_list': "📋 **Командалар тізімі**\n\n/start - Өтінімді бастау\n/stats - Менің статистикам\n/settings - Баптаулар\n/faq - Жиі қойылатын сұрақтар\n/about - Жоба туралы\n/commands - Командалар тізімі\n/cancel - Әрекетті болдырмау",
+        'about_text': "ℹ️ **NoFuss Guide жобасы туралы**\n\n🤖 Бот сіздің тілектеріңізді жинайды, ал нақты таңдауды маман жасайды.\n\n📅 Нұсқа: 2.0\n📧 Байланыс: @goojifeed\n📢 Арна: @NoFussGuide\n\nБіздің сервисті пайдаланғаныңыз үшін рахмет! 🙏",
+        'commands_list': "📋 **Командалар тізімі**\n\n/start - Өтінімді бастау\n/stats - Менің статистикам\n/settings - Баптаулар\n/faq - Жиі қойылатын сұрақтар\n/about - Жоба туралы\n/commands - Командалар тізімі\n/cancel - Әрекетті болдырмау\n/news_now - Жаңалықтар жинау (тек админ үшін)",
         'faq_text': "❓ Жиі қойылатын сұрақтар\n\n• Қаншалықты тез жауап береміз? — Күн ішінде\n• Пайдаланылған техниканы қарастырасыз ба? — Иә\n• Құны? — Жеке келісіледі 🤝\n• Қандай брендтер? — Кез келген лайықты нұсқалар\n• Пікірді қалай қалдыруға болады? — Өтінім орындалғаннан кейін батырма пайда болады",
         'contact_direct': "💬 Тікелей хат жазу: @goojifeed",
         'fallback_text': "Мәзір батырмаларын пайдаланыңыз 👇",
@@ -815,10 +838,11 @@ def generate_post(article, index, total, source_name):
     image_url = get_news_image(title_ru)
     return {'text': post, 'image': image_url}
 
-# ---------- ОТДЕЛЬНЫЙ ОБРАБОТЧИК /start ----------
-@dp.message(Command("start"))
+# ---------- ОБРАБОТЧИКИ ----------
+# Используем Application из python-telegram-bot, поэтому используем app вместо dp
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отдельный обработчик для /start, который работает всегда"""
+    """Обработчик команды /start"""
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
@@ -1069,7 +1093,6 @@ async def show_confirm(update_or_query, context, user_id):
     else:
         await update_or_query.message.reply_text(text, reply_markup=confirm_inline(user_id))
 
-# ---------- ОБРАБОТЧИК ПОДТВЕРЖДЕНИЯ ----------
 async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1106,7 +1129,6 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return CATEGORY
 
-# ---------- ОБРАБОТЧИК РЕДАКТИРОВАНИЯ ----------
 async def handle_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1163,7 +1185,6 @@ async def handle_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return CATEGORY
 
-# ---------- НАВИГАЦИОННЫЕ КОЛБЭКИ ----------
 async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1219,7 +1240,6 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return USED
 
-# ---------- КОНТАКТ ----------
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     
@@ -1289,7 +1309,6 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return AFTER_SUBMIT
 
-# ---------- ОБРАБОТЧИК AFTER_SUBMIT ----------
 async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1358,7 +1377,6 @@ async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return CATEGORY
 
-# ---------- СТАТИСТИКА ПОЛЬЗОВАТЕЛЯ ----------
 async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     
@@ -1400,7 +1418,6 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=remove_keyboard())
 
-# ---------- НАСТРОЙКИ ----------
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     await update.message.reply_text(
@@ -1481,7 +1498,6 @@ async def theme_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=settings_inline(user_id)
     )
 
-# ---------- ФИДБЕК ----------
 async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1534,7 +1550,6 @@ async def handle_feedback_text(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     return ConversationHandler.END
 
-# ---------- ЗАПРОС ФИДБЕКА ПОСЛЕ ВЫПОЛНЕНИЯ ----------
 async def request_feedback(request_id, user_id):
     await bot.send_message(
         user_id,
@@ -1542,7 +1557,6 @@ async def request_feedback(request_id, user_id):
         reply_markup=feedback_inline(request_id, user_id)
     )
 
-# ---------- СТАТУСЫ ЗАЯВОК ----------
 async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1572,7 +1586,6 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
         get_text(user_id, 'status_updated', status=f"{status_emoji} {status_text}")
     )
     
-    # После изменения статуса добавляем кнопку связи со специалистом
     await query.get_bot().send_message(
         user_id,
         get_text(user_id, 'contact_admin_text'),
@@ -1585,7 +1598,6 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
     if new_status == "completed":
         await request_feedback(request_id, user_id)
     
-    # Обновляем сообщение админа с новыми кнопками
     admin_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 В работу", callback_data=f"request_status_{request_id}_processing")],
         [InlineKeyboardButton("✅ Выполнена", callback_data=f"request_status_{request_id}_completed")],
@@ -1598,7 +1610,6 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=admin_keyboard
     )
 
-# ---------- КОМАНДЫ ----------
 async def commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     await update.message.reply_text(
@@ -1631,11 +1642,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Действие отменено.", reply_markup=remove_keyboard())
     return ConversationHandler.END
 
-# ---------- FALLBACK С ОБРАБОТКОЙ /start ----------
 async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     
-    # Если пользователь ввел /start, обрабатываем отдельно
     if update.message.text == '/start':
         return await start_command(update, context)
     
@@ -1644,7 +1653,6 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=remove_keyboard()
     )
 
-# ---------- НОВОСТИ (АДМИН) ----------
 async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text(get_text(update.message.from_user.id, 'admin_only'))
@@ -1720,7 +1728,6 @@ async def send_post_to_admin(update, context, index):
     else:
         await update.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=keyboard)
 
-# ---------- КОЛБЭКИ НОВОСТЕЙ ----------
 async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1842,7 +1849,6 @@ async def handle_edit_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(get_text(user_id, 'post_updated'))
     await send_post_to_admin(update, context, editing_index)
 
-# ---------- АДМИН ----------
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         return
@@ -1970,7 +1976,6 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-# ---------- ЧАТ С АДМИНОМ ----------
 async def handle_request_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
