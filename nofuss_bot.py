@@ -654,7 +654,7 @@ def feedback_inline(request_id, user_id):
         [InlineKeyboardButton("⭐⭐⭐ 3", callback_data=f"feedback_rating_{request_id}_3")],
         [InlineKeyboardButton("⭐⭐⭐⭐ 4", callback_data=f"feedback_rating_{request_id}_4")],
         [InlineKeyboardButton("⭐⭐⭐⭐⭐ 5", callback_data=f"feedback_rating_{request_id}_5")],
-        [InlineKeyboardButton(get_text(user_id, 'feedback_btn'), callback_data=f"feedback_text_{request_id}")],
+        [InlineKeyboardButton("✏️ Оставить текстовый отзыв", callback_data=f"feedback_text_{request_id}")],
         [InlineKeyboardButton("❌ Пропустить", callback_data=f"feedback_skip_{request_id}")]
     ])
 
@@ -666,7 +666,7 @@ def contact_keyboard():
 def remove_keyboard():
     return ReplyKeyboardMarkup([[]], resize_keyboard=True)
 
-# ---------- НОВОСТИ (только рабочие источники) ----------
+# ---------- НОВОСТИ ----------
 TECH_RSS_FEEDS = {
     "The Verge": "https://www.theverge.com/rss/index.xml",
     "TechCrunch": "https://techcrunch.com/feed/",
@@ -1518,34 +1518,45 @@ async def theme_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик кнопок отзыва"""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     
-    parts = query.data.split("_")
-    request_id = int(parts[1])
-    
-    if parts[2] == "skip":
-        await query.edit_message_text(get_text(user_id, 'feedback_skip'))
-        return ConversationHandler.END
-    
-    elif parts[2] == "text":
-        await query.edit_message_text(get_text(user_id, 'feedback_text_prompt'))
-        context.user_data['feedback_request_id'] = request_id
-        return FEEDBACK_TEXT
-    
-    else:  # rating
-        rating = int(parts[2])
-        cursor.execute("""
-            INSERT INTO feedback(request_id, user_id, rating)
-            VALUES(?, ?, ?)
-        """, (request_id, user_id, rating))
-        db.commit()
+    try:
+        parts = query.data.split("_")
+        if len(parts) < 3:
+            await query.edit_message_text("❌ Ошибка в данных отзыва")
+            return ConversationHandler.END
         
-        await query.edit_message_text(
-            get_text(user_id, 'feedback_rating_thanks', rating=rating),
-            parse_mode=None
-        )
+        request_id = int(parts[2])
+        
+        if parts[1] == "skip":
+            await query.edit_message_text(get_text(user_id, 'feedback_skip'))
+            return ConversationHandler.END
+        
+        elif parts[1] == "text":
+            await query.edit_message_text(get_text(user_id, 'feedback_text_prompt'))
+            context.user_data['feedback_request_id'] = request_id
+            return FEEDBACK_TEXT
+        
+        elif parts[1] == "rating":
+            rating = int(parts[3])
+            cursor.execute("""
+                INSERT INTO feedback(request_id, user_id, rating)
+                VALUES(?, ?, ?)
+            """, (request_id, user_id, rating))
+            db.commit()
+            
+            await query.edit_message_text(
+                get_text(user_id, 'feedback_rating_thanks', rating=rating),
+                parse_mode=None
+            )
+            return ConversationHandler.END
+            
+    except Exception as e:
+        logger.error(f"Feedback error: {e}")
+        await query.edit_message_text("❌ Произошла ошибка при обработке отзыва")
         return ConversationHandler.END
 
 async def handle_feedback_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1567,15 +1578,19 @@ async def handle_feedback_text(update: Update, context: ContextTypes.DEFAULT_TYP
         get_text(user_id, 'feedback_text_thanks'),
         parse_mode=None
     )
+    context.user_data.pop('feedback_request_id', None)
     return ConversationHandler.END
 
-async def request_feedback(request_id, user_id):
-    bot = Application.builder().token(TOKEN).build().bot
-    await bot.send_message(
-        user_id,
-        get_text(user_id, 'feedback_request'),
-        reply_markup=feedback_inline(request_id, user_id)
-    )
+async def request_feedback(bot, request_id, user_id):
+    """Отправка запроса на отзыв"""
+    try:
+        await bot.send_message(
+            user_id,
+            get_text(user_id, 'feedback_request'),
+            reply_markup=feedback_inline(request_id, user_id)
+        )
+    except Exception as e:
+        logger.error(f"Error sending feedback request: {e}")
 
 async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1601,7 +1616,7 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
     
     status_emoji = get_status_emoji(new_status)
     status_text = get_status_text(new_status, user_id)
-    bot = Application.builder().token(TOKEN).build().bot
+    bot = query.get_bot()
     
     await bot.send_message(
         user_id,
@@ -1618,7 +1633,7 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
     )
     
     if new_status == "completed":
-        await request_feedback(request_id, user_id)
+        await request_feedback(bot, request_id, user_id)
     
     admin_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 В работу", callback_data=f"request_status_{request_id}_processing")],
@@ -2070,14 +2085,12 @@ def signal_handler(sig, frame):
 
 # ---------- ЗАПУСК ----------
 async def main():
-    # Регистрируем обработчики сигналов для корректного завершения
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
     app = Application.builder().token(TOKEN).build()
     
     try:
-        # Удаляем вебхук при запуске
         await app.bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook deleted successfully")
     except Exception as e:
@@ -2174,7 +2187,6 @@ async def main():
         await app.updater.start_polling()
         logger.info("Polling started...")
         
-        # Бесконечный цикл с обработкой сигналов
         while True:
             await asyncio.sleep(1)
     except (KeyboardInterrupt, SystemExit):
