@@ -1,17 +1,5 @@
 import asyncio
 import os
-import sqlite3
-# ... другие импорты ...
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 479330946
-
-# Создаём экземпляры бота и диспетчера
-bot = Bot(token=TOKEN)
-
-import asyncio
-import os
 import time
 import sqlite3
 import csv
@@ -30,6 +18,7 @@ import textwrap
 # Для перевода
 from deep_translator import GoogleTranslator
 
+# Импорты для Telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
@@ -826,14 +815,10 @@ def generate_post(article, index, total, source_name):
     return {'text': post, 'image': image_url}
 
 # ---------- ОБРАБОТЧИКИ ----------
-# Используем Application из python-telegram-bot, поэтому используем app вместо dp
-
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
-    # Очищаем всё состояние
     await context.reset()
     context.user_data.clear()
     
