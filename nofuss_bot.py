@@ -120,7 +120,46 @@ TRANSLATIONS = {
         'feedback_thanks': "🙏 Спасибо за ваш отзыв!",
         'theme_changed': "🎨 Тема изменена на {theme}",
         'language_changed': "🌐 Язык изменён на {lang}",
-        'wait_spam': "⏳ Пожалуйста, подождите {seconds} секунд перед отправкой новой заявки."
+        'wait_spam': "⏳ Пожалуйста, подождите {seconds} секунд перед отправкой новой заявки.",
+        'processing': "🔄 В работе",
+        'completed': "✅ Выполнена",
+        'cancelled': "❌ Отменена",
+        'pending': "⏳ В обработке",
+        'feedback_request': "🎉 Ваша заявка выполнена!\n\nПожалуйста, оцените нашу работу или оставьте текстовый отзыв:",
+        'feedback_skip': "❌ Спасибо! Вы всегда можете оставить отзыв позже.",
+        'feedback_rating_thanks': "🙏 Спасибо за ваш отзыв!\n\n⭐ Ваша оценка: {rating}\nМы учтём ваше мнение! 💙",
+        'feedback_text_prompt': "✏️ Напишите ваш отзыв текстом:\n\nЧто вам понравилось? Что можно улучшить? Будем рады вашим комментариям!",
+        'feedback_text_thanks': "🙏 Спасибо за ваш отзыв!\n\nМы обязательно учтём ваши пожелания! 💙",
+        'status_updated': "📢 Статус вашей заявки обновлён!\n\nНовый статус: {status}",
+        'no_requests': "📋 У вас пока нет заявок.\n\nНажмите '🆕 Новая заявка' чтобы создать первую!",
+        'my_requests_title': "📋 **Ваши последние заявки:**",
+        'new_request_btn': "🆕 Новая заявка",
+        'stats_title': "📊 **Ваша статистика**",
+        'stats_total': "📨 Всего заявок: {total}",
+        'stats_pending': "⏳ В обработке: {pending}",
+        'stats_processing': "🔄 В работе: {processing}",
+        'stats_completed': "✅ Выполнено: {completed}",
+        'stats_cancelled': "❌ Отменено: {cancelled}",
+        'stats_avg_time': "⏱ Среднее время ответа: {time} ч.",
+        'achievements': "🏆 Достижения:",
+        'no_achievements': "Пока нет достижений. Отправьте первую заявку! 🚀",
+        'settings_title': "⚙️ **Настройки**\n\nВыберите раздел для настройки:",
+        'settings_lang': "🌐 **Выберите язык:**",
+        'settings_theme': "🎨 **Выберите тему:**",
+        'about_text': "ℹ️ **О проекте NoFuss Guide**\n\n🤖 Бот автоматически собирает все требования, а итоговый подбор выполняет специалист.\n\n📅 Версия: 2.0\n📧 Контакты: @goojifeed\n📢 Канал: @NoFussGuide\n\nСпасибо, что пользуетесь нашим сервисом! 🙏",
+        'commands_list': "📋 **Список команд**\n\n/start - Начать оформление заявки\n/stats - Моя статистика\n/settings - Настройки\n/faq - Частые вопросы\n/about - О проекте\n/commands - Список команд\n/cancel - Отменить действие",
+        'faq_text': "❓ Частые вопросы\n\n• Как быстро отвечаем? — В течение дня\n• Подбираете б/у? — Да\n• Стоимость? — Обсуждается индивидуально 🤝\n• Какие бренды? — Любые достойные варианты\n• Как оставить отзыв? — После выполнения заявки появится кнопка",
+        'contact_direct': "💬 Написать напрямую: @goojifeed",
+        'fallback_text': "Используйте кнопки меню 👇",
+        'admin_only': "⛔ Только для админа",
+        'collecting_news': "🔍 Собираю свежие новости... Это может занять 30-40 секунд.",
+        'news_not_found': "❌ Новостей не найдено. Попробуйте позже.",
+        'news_found': "✅ Найдено {count} новостей! Отправляю посты...",
+        'post_published': "✅ **Пост опубликован!** 🎉",
+        'publish_error': "❌ Ошибка публикации: {error}",
+        'edit_post': "✏️ **Редактирование поста**\n\nОтправьте новый текст (Markdown поддерживается)\n\nПример:\n**Заголовок**\nТекст новости...\n\n🔗 [Подробнее](url)\n\n— *NoFuss Guide*",
+        'post_updated': "✅ Пост обновлён!",
+        'post_not_found': "❌ Посты не найдены"
     },
     'en': {
         'welcome': "👋 Welcome to NoFuss Guide!\n\n🔍 The bot automatically collects all requirements, and a specialist performs the final selection.\n\n📋 Type /commands to see all available commands.",
@@ -148,7 +187,46 @@ TRANSLATIONS = {
         'feedback_thanks': "🙏 Thank you for your feedback!",
         'theme_changed': "🎨 Theme changed to {theme}",
         'language_changed': "🌐 Language changed to {lang}",
-        'wait_spam': "⏳ Please wait {seconds} seconds before sending a new request."
+        'wait_spam': "⏳ Please wait {seconds} seconds before sending a new request.",
+        'processing': "🔄 In progress",
+        'completed': "✅ Completed",
+        'cancelled': "❌ Cancelled",
+        'pending': "⏳ Pending",
+        'feedback_request': "🎉 Your request has been completed!\n\nPlease rate our service or leave a text review:",
+        'feedback_skip': "❌ Thank you! You can always leave feedback later.",
+        'feedback_rating_thanks': "🙏 Thank you for your feedback!\n\n⭐ Your rating: {rating}\nWe will take your opinion into account! 💙",
+        'feedback_text_prompt': "✏️ Write your review:\n\nWhat did you like? What can be improved? We appreciate your comments!",
+        'feedback_text_thanks': "🙏 Thank you for your review!\n\nWe will definitely take your wishes into account! 💙",
+        'status_updated': "📢 The status of your request has been updated!\n\nNew status: {status}",
+        'no_requests': "📋 You have no requests yet.\n\nClick '🆕 New request' to create your first one!",
+        'my_requests_title': "📋 **Your recent requests:**",
+        'new_request_btn': "🆕 New request",
+        'stats_title': "📊 **Your statistics**",
+        'stats_total': "📨 Total requests: {total}",
+        'stats_pending': "⏳ Pending: {pending}",
+        'stats_processing': "🔄 In progress: {processing}",
+        'stats_completed': "✅ Completed: {completed}",
+        'stats_cancelled': "❌ Cancelled: {cancelled}",
+        'stats_avg_time': "⏱ Average response time: {time} h.",
+        'achievements': "🏆 Achievements:",
+        'no_achievements': "No achievements yet. Submit your first request! 🚀",
+        'settings_title': "⚙️ **Settings**\n\nSelect a section to configure:",
+        'settings_lang': "🌐 **Select language:**",
+        'settings_theme': "🎨 **Select theme:**",
+        'about_text': "ℹ️ **About NoFuss Guide**\n\n🤖 The bot automatically collects all requirements, and a specialist performs the final selection.\n\n📅 Version: 2.0\n📧 Contacts: @goojifeed\n📢 Channel: @NoFussGuide\n\nThank you for using our service! 🙏",
+        'commands_list': "📋 **Commands list**\n\n/start - Start a request\n/stats - My statistics\n/settings - Settings\n/faq - FAQ\n/about - About project\n/commands - Commands list\n/cancel - Cancel action",
+        'faq_text': "❓ FAQ\n\n• How fast do we respond? — Within a day\n• Do you consider used devices? — Yes\n• Cost? — Discussed individually 🤝\n• Which brands? — Any worthy options\n• How to leave feedback? — After request completion, a button will appear",
+        'contact_direct': "💬 Contact directly: @goojifeed",
+        'fallback_text': "Use the menu buttons 👇",
+        'admin_only': "⛔ Admin only",
+        'collecting_news': "🔍 Collecting fresh news... This may take 30-40 seconds.",
+        'news_not_found': "❌ No news found. Please try again later.",
+        'news_found': "✅ Found {count} news! Sending posts...",
+        'post_published': "✅ **Post published!** 🎉",
+        'publish_error': "❌ Publication error: {error}",
+        'edit_post': "✏️ **Editing post**\n\nSend new text (Markdown supported)\n\nExample:\n**Title**\nNews text...\n\n🔗 [Read more](url)\n\n— *NoFuss Guide*",
+        'post_updated': "✅ Post updated!",
+        'post_not_found': "❌ Posts not found"
     },
     'kk': {
         'welcome': "👋 NoFuss Guide-ге қош келдіңіз!\n\n🔍 Бот барлық талаптарды автоматты түрде жинайды, ал нақты таңдауды маман жасайды.\n\n📋 Барлық қолжетімді командаларды көру үшін /commands жазыңыз.",
@@ -176,7 +254,46 @@ TRANSLATIONS = {
         'feedback_thanks': "🙏 Пікіріңіз үшін рахмет!",
         'theme_changed': "🎨 Тақырып {theme} өзгертілді",
         'language_changed': "🌐 Тіл {lang} өзгертілді",
-        'wait_spam': "⏳ Жаңа өтінім жіберу алдында {seconds} секунд күтіңіз."
+        'wait_spam': "⏳ Жаңа өтінім жіберу алдында {seconds} секунд күтіңіз.",
+        'processing': "🔄 Жұмыс барысында",
+        'completed': "✅ Орындалды",
+        'cancelled': "❌ Болдырылмады",
+        'pending': "⏳ Өңделуде",
+        'feedback_request': "🎉 Сіздің өтініміңіз орындалды!\n\nБіздің жұмысты бағалаңыз немесе мәтіндік пікір қалдырыңыз:",
+        'feedback_skip': "❌ Рахмет! Сіз әрқашан кейінірек пікір қалдыра аласыз.",
+        'feedback_rating_thanks': "🙏 Пікіріңіз үшін рахмет!\n\n⭐ Сіздің бағаңыз: {rating}\nБіз сіздің пікіріңізді ескереміз! 💙",
+        'feedback_text_prompt': "✏️ Пікіріңізді жазыңыз:\n\nНе ұнады? Не жақсартуға болады? Пікірлеріңізге қуаныштымыз!",
+        'feedback_text_thanks': "🙏 Пікіріңіз үшін рахмет!\n\nБіз сіздің тілектеріңізді міндетті түрде ескереміз! 💙",
+        'status_updated': "📢 Сіздің өтініміңіздің мәртебесі жаңартылды!\n\nЖаңа мәртебе: {status}",
+        'no_requests': "📋 Сізде әлі өтінім жоқ.\n\nБірінші өтінімді жасау үшін '🆕 Жаңа өтінім' батырмасын басыңыз!",
+        'my_requests_title': "📋 **Соңғы өтінімдеріңіз:**",
+        'new_request_btn': "🆕 Жаңа өтінім",
+        'stats_title': "📊 **Сіздің статистикаңыз**",
+        'stats_total': "📨 Барлық өтінім: {total}",
+        'stats_pending': "⏳ Өңделуде: {pending}",
+        'stats_processing': "🔄 Жұмыс барысында: {processing}",
+        'stats_completed': "✅ Орындалды: {completed}",
+        'stats_cancelled': "❌ Болдырылмады: {cancelled}",
+        'stats_avg_time': "⏱ Орташа жауап уақыты: {time} с.",
+        'achievements': "🏆 Жетістіктер:",
+        'no_achievements': "Әлі жетістіктер жоқ. Бірінші өтінімді жіберіңіз! 🚀",
+        'settings_title': "⚙️ **Баптаулар**\n\nБаптау үшін бөлімді таңдаңыз:",
+        'settings_lang': "🌐 **Тілді таңдаңыз:**",
+        'settings_theme': "🎨 **Тақырыпты таңдаңыз:**",
+        'about_text': "ℹ️ **NoFuss Guide жобасы туралы**\n\n🤖 Бот барлық талаптарды автоматты түрде жинайды, ал нақты таңдауды маман жасайды.\n\n📅 Нұсқа: 2.0\n📧 Байланыс: @goojifeed\n📢 Арна: @NoFussGuide\n\nБіздің сервисті пайдаланғаныңыз үшін рахмет! 🙏",
+        'commands_list': "📋 **Командалар тізімі**\n\n/start - Өтінімді бастау\n/stats - Менің статистикам\n/settings - Баптаулар\n/faq - Жиі қойылатын сұрақтар\n/about - Жоба туралы\n/commands - Командалар тізімі\n/cancel - Әрекетті болдырмау",
+        'faq_text': "❓ Жиі қойылатын сұрақтар\n\n• Қаншалықты тез жауап береміз? — Күн ішінде\n• Пайдаланылған техниканы қарастырасыз ба? — Иә\n• Құны? — Жеке келісіледі 🤝\n• Қандай брендтер? — Кез келген лайықты нұсқалар\n• Пікірді қалай қалдыруға болады? — Өтінім орындалғаннан кейін батырма пайда болады",
+        'contact_direct': "💬 Тікелей хат жазу: @goojifeed",
+        'fallback_text': "Мәзір батырмаларын пайдаланыңыз 👇",
+        'admin_only': "⛔ Тек админ үшін",
+        'collecting_news': "🔍 Жаңа жаңалықтарды жинау... Бұл 30-40 секундқа созылуы мүмкін.",
+        'news_not_found': "❌ Жаңалықтар табылмады. Кейінірек қайталап көріңіз.",
+        'news_found': "✅ {count} жаңалық табылды! Посттар жіберілуде...",
+        'post_published': "✅ **Пост жарияланды!** 🎉",
+        'publish_error': "❌ Жариялау қатесі: {error}",
+        'edit_post': "✏️ **Посты өңдеу**\n\nЖаңа мәтінді жіберіңіз (Markdown қолдау көрсетеді)\n\nМысал:\n**Тақырып**\nЖаңалық мәтіні...\n\n🔗 [Толығырақ](url)\n\n— *NoFuss Guide*",
+        'post_updated': "✅ Пост жаңартылды!",
+        'post_not_found': "❌ Посттар табылмады"
     }
 }
 
@@ -278,8 +395,10 @@ def get_status_emoji(status):
     status_map = {'pending': '⏳', 'processing': '🔄', 'completed': '✅', 'cancelled': '❌'}
     return status_map.get(status, '📌')
 
-def get_status_text(status):
-    status_map = {'pending': 'В обработке', 'processing': 'В работе', 'completed': 'Выполнена', 'cancelled': 'Отменена'}
+def get_status_text(status, user_id=None):
+    if user_id:
+        return get_text(user_id, status)
+    status_map = {'pending': '⏳ В обработке', 'processing': '🔄 В работе', 'completed': '✅ Выполнена', 'cancelled': '❌ Отменена'}
     return status_map.get(status, status)
 
 # ---------- ИНЛАЙН-КЛАВИАТУРЫ ----------
@@ -381,28 +500,28 @@ def settings_inline(user_id):
         [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
     ])
 
-def language_select_inline():
+def language_select_inline(user_id):
     buttons = []
     for code, name in LANGUAGES.items():
         buttons.append([InlineKeyboardButton(name, callback_data=f"lang_{code}")])
-    buttons.append([InlineKeyboardButton("🏠 Назад", callback_data="settings")])
+    buttons.append([InlineKeyboardButton(get_text(user_id, 'back'), callback_data="settings_back")])
     return InlineKeyboardMarkup(buttons)
 
-def theme_select_inline():
+def theme_select_inline(user_id):
     buttons = []
     for code, name in THEMES.items():
         buttons.append([InlineKeyboardButton(name, callback_data=f"theme_{code}")])
-    buttons.append([InlineKeyboardButton("🏠 Назад", callback_data="settings")])
+    buttons.append([InlineKeyboardButton(get_text(user_id, 'back'), callback_data="settings_back")])
     return InlineKeyboardMarkup(buttons)
 
-def feedback_inline(request_id):
+def feedback_inline(request_id, user_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⭐ 1", callback_data=f"feedback_rating_{request_id}_1")],
         [InlineKeyboardButton("⭐⭐ 2", callback_data=f"feedback_rating_{request_id}_2")],
         [InlineKeyboardButton("⭐⭐⭐ 3", callback_data=f"feedback_rating_{request_id}_3")],
         [InlineKeyboardButton("⭐⭐⭐⭐ 4", callback_data=f"feedback_rating_{request_id}_4")],
         [InlineKeyboardButton("⭐⭐⭐⭐⭐ 5", callback_data=f"feedback_rating_{request_id}_5")],
-        [InlineKeyboardButton("✏️ Написать отзыв", callback_data=f"feedback_text_{request_id}")],
+        [InlineKeyboardButton(get_text(user_id, 'feedback_btn'), callback_data=f"feedback_text_{request_id}")],
         [InlineKeyboardButton("❌ Пропустить", callback_data=f"feedback_skip_{request_id}")]
     ])
 
@@ -975,24 +1094,23 @@ async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         if not requests:
             await query.edit_message_text(
-                "📋 У вас пока нет заявок.\n\n"
-                "Нажмите '🆕 Новая заявка' чтобы создать первую!",
+                get_text(user_id, 'no_requests'),
                 reply_markup=after_submit_inline(user_id)
             )
             return AFTER_SUBMIT
         
-        text = "📋 **Ваши последние заявки:**\n\n"
+        text = f"{get_text(user_id, 'my_requests_title')}\n\n"
         for req in requests:
             status = get_status_emoji(req[3])
             date = req[4][:10] if req[4] else 'Дата неизвестна'
             text += f"#{req[1]} {status} **{req[2]}**\n"
-            text += f"   📅 {date} | {get_status_text(req[3])}\n"
+            text += f"   📅 {date} | {get_status_text(req[3], user_id)}\n"
             text += f"   💰 {req[5]}\n"
             if req[6] and req[6] != "Не требуется":
                 text += f"   🎯 {req[6]}\n"
             text += "\n"
         
-        text += "Нажмите '🆕 Новая заявка' чтобы создать новую"
+        text += f"Нажмите '{get_text(user_id, 'new_request')}' чтобы создать новую"
         
         await query.edit_message_text(
             text,
@@ -1033,20 +1151,20 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if total >= 10:
         achievements.append("👑 Гуру")
     
-    text = f"📊 **Ваша статистика**\n\n"
-    text += f"📨 Всего заявок: {total}\n"
-    text += f"⏳ В обработке: {pending}\n"
-    text += f"🔄 В работе: {processing}\n"
-    text += f"✅ Выполнено: {completed}\n"
-    text += f"❌ Отменено: {cancelled}\n"
+    text = f"{get_text(user_id, 'stats_title')}\n\n"
+    text += f"{get_text(user_id, 'stats_total', total=total)}\n"
+    text += f"{get_text(user_id, 'stats_pending', pending=pending)}\n"
+    text += f"{get_text(user_id, 'stats_processing', processing=processing)}\n"
+    text += f"{get_text(user_id, 'stats_completed', completed=completed)}\n"
+    text += f"{get_text(user_id, 'stats_cancelled', cancelled=cancelled)}\n"
     if avg_time:
-        text += f"⏱ Среднее время ответа: {avg_time:.1f} ч.\n"
-    text += f"\n🏆 Достижения:\n"
+        text += f"{get_text(user_id, 'stats_avg_time', time=f'{avg_time:.1f}')}\n"
+    text += f"\n{get_text(user_id, 'achievements')}\n"
     if achievements:
         for ach in achievements:
             text += f"  • {ach}\n"
     else:
-        text += "  • Пока нет достижений. Отправьте первую заявку! 🚀\n"
+        text += f"  • {get_text(user_id, 'no_achievements')}\n"
     
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=remove_keyboard())
 
@@ -1054,8 +1172,7 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     await update.message.reply_text(
-        "⚙️ **Настройки**\n\n"
-        "Выберите раздел для настройки:",
+        get_text(user_id, 'settings_title'),
         parse_mode="Markdown",
         reply_markup=settings_inline(user_id)
     )
@@ -1067,24 +1184,23 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if query.data == "settings_lang":
         await query.edit_message_text(
-            "🌐 **Выберите язык:**",
+            get_text(user_id, 'settings_lang'),
             parse_mode="Markdown",
-            reply_markup=language_select_inline()
+            reply_markup=language_select_inline(user_id)
         )
         return
     
     elif query.data == "settings_theme":
         await query.edit_message_text(
-            "🎨 **Выберите тему:**",
+            get_text(user_id, 'settings_theme'),
             parse_mode="Markdown",
-            reply_markup=theme_select_inline()
+            reply_markup=theme_select_inline(user_id)
         )
         return
     
-    elif query.data == "settings":
+    elif query.data == "settings_back":
         await query.edit_message_text(
-            "⚙️ **Настройки**\n\n"
-            "Выберите раздел для настройки:",
+            get_text(user_id, 'settings_title'),
             parse_mode="Markdown",
             reply_markup=settings_inline(user_id)
         )
@@ -1133,14 +1249,11 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     request_id = int(parts[1])
     
     if parts[2] == "skip":
-        await query.edit_message_text("❌ Спасибо! Вы всегда можете оставить отзыв позже.")
+        await query.edit_message_text(get_text(user_id, 'feedback_skip'))
         return ConversationHandler.END
     
     elif parts[2] == "text":
-        await query.edit_message_text(
-            "✏️ Напишите ваш отзыв текстом:\n\n"
-            "Что вам понравилось? Что можно улучшить? Будем рады вашим комментариям!"
-        )
+        await query.edit_message_text(get_text(user_id, 'feedback_text_prompt'))
         context.user_data['feedback_request_id'] = request_id
         return FEEDBACK_TEXT
     
@@ -1153,9 +1266,7 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.commit()
         
         await query.edit_message_text(
-            f"{get_text(user_id, 'feedback_thanks')}\n\n"
-            f"⭐ Ваша оценка: {rating}\n"
-            "Мы учтём ваше мнение! 🙏",
+            get_text(user_id, 'feedback_rating_thanks', rating=rating),
             parse_mode="Markdown"
         )
         return ConversationHandler.END
@@ -1176,8 +1287,7 @@ async def handle_feedback_text(update: Update, context: ContextTypes.DEFAULT_TYP
     db.commit()
     
     await update.message.reply_text(
-        "🙏 Спасибо за ваш отзыв!\n\n"
-        "Мы обязательно учтём ваши пожелания! 💙",
+        get_text(user_id, 'feedback_text_thanks'),
         parse_mode="Markdown"
     )
     return ConversationHandler.END
@@ -1186,9 +1296,8 @@ async def handle_feedback_text(update: Update, context: ContextTypes.DEFAULT_TYP
 async def request_feedback(request_id, user_id):
     await bot.send_message(
         user_id,
-        "🎉 Ваша заявка выполнена!\n\n"
-        "Пожалуйста, оцените нашу работу или оставьте текстовый отзыв:",
-        reply_markup=feedback_inline(request_id)
+        get_text(user_id, 'feedback_request'),
+        reply_markup=feedback_inline(request_id, user_id)
     )
 
 # ---------- СТАТУСЫ ЗАЯВОК ----------
@@ -1204,8 +1313,6 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
     request_id = int(parts[2])
     new_status = parts[3]
     
-    status_map = {'processing': '🔄 В работе', 'completed': '✅ Выполнена', 'cancelled': '❌ Отменена'}
-    
     request_data = cursor.execute("SELECT user_id, request_number FROM requests WHERE id = ?", (request_id,)).fetchone()
     if not request_data:
         await query.edit_message_text("❌ Заявка не найдена")
@@ -1216,8 +1323,12 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
     cursor.execute("UPDATE requests SET status = ?, confirmed_at = CURRENT_TIMESTAMP WHERE id = ?", (new_status, request_id))
     db.commit()
     
-    status_text = status_map.get(new_status, new_status)
-    await query.get_bot().send_message(user_id, f"📢 Статус вашей заявки обновлён!\n\nНовый статус: {status_text}\n\nПо вопросам: @goojifeed")
+    status_emoji = get_status_emoji(new_status)
+    status_text = get_status_text(new_status, user_id)
+    await query.get_bot().send_message(
+        user_id,
+        get_text(user_id, 'status_updated', status=f"{status_emoji} {status_text}")
+    )
     
     if new_status == "completed":
         await request_feedback(request_id, user_id)
@@ -1226,27 +1337,17 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
 
 # ---------- КОМАНДЫ ----------
 async def commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
     await update.message.reply_text(
-        "📋 **Список команд**\n\n"
-        "/start - Начать оформление заявки\n"
-        "/stats - Моя статистика\n"
-        "/settings - Настройки\n"
-        "/faq - Частые вопросы\n"
-        "/about - О проекте\n"
-        "/commands - Список команд\n"
-        "/cancel - Отменить действие",
+        get_text(user_id, 'commands_list'),
         parse_mode="Markdown",
         reply_markup=remove_keyboard()
     )
 
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
     await update.message.reply_text(
-        "ℹ️ **О проекте NoFuss Guide**\n\n"
-        "🤖 Бот автоматически собирает все требования, а итоговый подбор выполняет специалист.\n\n"
-        "📅 Версия: 2.0\n"
-        "📧 Контакты: @goojifeed\n"
-        "📢 Канал: @NoFussGuide\n\n"
-        "Спасибо, что пользуетесь нашим сервисом! 🙏",
+        get_text(user_id, 'about_text'),
         parse_mode="Markdown",
         reply_markup=remove_keyboard()
     )
@@ -1254,12 +1355,7 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     await update.message.reply_text(
-        f"{get_text(user_id, 'faq')}\n\n"
-        "• Как быстро отвечаем? — В течение дня\n"
-        "• Подбираете б/у? — Да\n"
-        "• Стоимость? — Обсуждается индивидуально 🤝\n"
-        "• Какие бренды? — Любые достойные варианты\n"
-        "• Как оставить отзыв? — После выполнения заявки появится кнопка",
+        get_text(user_id, 'faq_text'),
         reply_markup=remove_keyboard()
     )
 
@@ -1271,8 +1367,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
     await update.message.reply_text(
-        "Используйте кнопки меню 👇",
+        get_text(user_id, 'fallback_text'),
         reply_markup=remove_keyboard()
     )
 
@@ -1363,9 +1460,9 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     
     if not posts:
         if query.message.photo:
-            await query.edit_message_caption(caption="❌ Посты не найдены")
+            await query.edit_message_caption(caption=get_text(user_id, 'post_not_found'))
         else:
-            await query.edit_message_text("❌ Посты не найдены")
+            await query.edit_message_text(get_text(user_id, 'post_not_found'))
         return
     
     action = query.data
@@ -1389,28 +1486,20 @@ async def handle_post_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 await query.get_bot().send_message(chat_id=channel_id, text=post['text'], parse_mode="Markdown", disable_web_page_preview=True)
             
             if query.message.photo:
-                await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ **Пост опубликован!** 🎉", parse_mode="Markdown")
+                await query.edit_message_caption(caption=f"{query.message.caption}\n\n{get_text(user_id, 'post_published')}", parse_mode="Markdown")
             else:
-                await query.edit_message_text(f"{query.message.text}\n\n✅ **Пост опубликован!** 🎉", parse_mode="Markdown")
+                await query.edit_message_text(f"{query.message.text}\n\n{get_text(user_id, 'post_published')}", parse_mode="Markdown")
         except Exception as e:
             if query.message.photo:
-                await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ Ошибка: {e}")
+                await query.edit_message_caption(caption=f"{query.message.caption}\n\n{get_text(user_id, 'publish_error', error=str(e))}")
             else:
-                await query.edit_message_text(f"{query.message.text}\n\n❌ Ошибка: {e}")
+                await query.edit_message_text(f"{query.message.text}\n\n{get_text(user_id, 'publish_error', error=str(e))}")
     
     elif action.startswith('edit_'):
         index = int(action.split('_')[1])
         context.user_data['editing_index'] = index
         
-        await query.message.reply_text(
-            "✏️ **Редактирование поста**\n\n"
-            "Отправьте новый текст (Markdown поддерживается)\n\n"
-            "Пример:\n"
-            "**Заголовок**\n"
-            "Текст новости...\n\n"
-            "🔗 [Подробнее](url)\n\n"
-            "— *NoFuss Guide*"
-        )
+        await query.message.reply_text(get_text(user_id, 'edit_post'))
         return
     
     elif action.startswith('prev_'):
@@ -1444,7 +1533,7 @@ async def send_post_to_admin_by_query(query, index):
     posts = data.get('posts', [])
     
     if not posts or index >= len(posts):
-        await query.message.reply_text("❌ Пост не найден")
+        await query.message.reply_text(get_text(user_id, 'post_not_found'))
         return
     
     post = posts[index]
@@ -1473,13 +1562,13 @@ async def handle_edit_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     posts = data.get('posts', [])
     
     if not posts or editing_index >= len(posts):
-        await update.message.reply_text("❌ Пост не найден")
+        await update.message.reply_text(get_text(user_id, 'post_not_found'))
         return
     
     posts[editing_index]['text'] = update.message.text
     pending_posts[user_id] = data
     
-    await update.message.reply_text("✅ Пост обновлён!")
+    await update.message.reply_text(get_text(user_id, 'post_updated'))
     await send_post_to_admin(update, context, editing_index)
 
 # ---------- АДМИН ----------
@@ -1683,7 +1772,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(admin_recent, pattern="^admin_recent$"))
     app.add_handler(CallbackQueryHandler(admin_recent_refresh, pattern="^admin_recent_refresh$"))
     app.add_handler(CallbackQueryHandler(admin_back, pattern="^admin_back$"))
-    app.add_handler(CallbackQueryHandler(settings_callback, pattern="^(settings_lang|settings_theme|settings|home)$"))
+    app.add_handler(CallbackQueryHandler(settings_callback, pattern="^(settings_lang|settings_theme|settings_back|home)$"))
     app.add_handler(CallbackQueryHandler(language_select, pattern="^lang_"))
     app.add_handler(CallbackQueryHandler(theme_select, pattern="^theme_"))
     app.add_handler(MessageHandler(filters.Regex('❓ FAQ'), faq))
