@@ -867,31 +867,27 @@ def run_health_server():
     loop.run_forever()
 
 # ---------- ОБРАБОТЧИКИ ----------
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start - полный сброс состояния"""
+# УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК /start - перехватывает все вызовы до ConversationHandler
+async def universal_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Универсальный обработчик /start - работает всегда, независимо от состояния"""
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
-    # 1. Очищаем user_data
-    clear_user_data(context)
-    
-    # 2. Принудительное завершение ConversationHandler
+    # ПОЛНАЯ ОЧИСТКА ВСЕХ ДАННЫХ
     if context.user_data:
         context.user_data.clear()
-    
-    # 3. Очищаем chat_data (дополнительный способ)
     if context.chat_data:
         context.chat_data.clear()
     
-    # 4. Удаляем черновик из БД
+    # Удаляем черновик
     delete_draft(user_id)
     
-    # 5. Регистрируем пользователя
+    # Регистрируем пользователя
     cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
                    (user_id, update.message.from_user.username or '', user_name))
     db.commit()
     
-    # 6. Отправляем приветственное сообщение
+    # Отправляем приветствие
     await update.message.reply_text(
         f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
         f"📱 {get_text(user_id, 'choose_category')}",
@@ -899,15 +895,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=remove_keyboard()
     )
     
-    # 7. Отправляем сообщение с выбором категории
+    # Отправляем выбор категории
     await update.message.reply_text(
         f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
         f"{get_text(user_id, 'choose_category')}",
         reply_markup=categories_inline(user_id)
     )
     
-    # 8. Возвращаем состояние CATEGORY для начала диалога
+    # Возвращаем состояние для ConversationHandler
     return CATEGORY
+
+# Основной обработчик start_command (для ConversationHandler)
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start для ConversationHandler"""
+    # Просто вызываем универсальный обработчик
+    return await universal_start(update, context)
 
 async def delete_draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1739,11 +1741,12 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Если это команда /start, передаём её в start_command
     if update.message.text and update.message.text.startswith('/'):
         if update.message.text == '/start':
+            # Полная очистка перед запуском
             clear_user_data(context)
             context.user_data.clear()
             if context.chat_data:
                 context.chat_data.clear()
-            return await start_command(update, context)
+            return await universal_start(update, context)
         return
     
     # Если пользователь ввёл текст вне диалога, предлагаем начать заново
@@ -2155,7 +2158,11 @@ def main():
     # Создаем приложение
     application = Application.builder().token(TOKEN).build()
     
-    # Регистрируем обработчики с дополнительными параметрами
+    # Сначала добавляем универсальный обработчик /start (перехватывает все вызовы)
+    # Он должен быть ПЕРВЫМ, чтобы перехватывать /start до ConversationHandler
+    application.add_handler(CommandHandler('start', universal_start))
+    
+    # Регистрируем ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_command)],
         states={
