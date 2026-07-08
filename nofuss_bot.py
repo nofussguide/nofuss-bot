@@ -820,7 +820,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
-    await context.reset()
+    # Убираем context.reset() - его нет в python-telegram-bot
     context.user_data.clear()
     
     cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
@@ -1995,6 +1995,9 @@ async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- ЗАПУСК ----------
 async def main():
     app = Application.builder().token(TOKEN).build()
+    
+    # Удаляем вебхук при запуске
+    await app.bot.delete_webhook(drop_pending_updates=True)
     
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_command)],
