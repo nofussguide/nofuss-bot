@@ -16,6 +16,10 @@ import random
 import textwrap
 import signal
 import sys
+import threading
+
+# Для aiohttp health-check
+from aiohttp import web
 
 # Для перевода
 from deep_translator import GoogleTranslator
@@ -33,17 +37,6 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
 UNSPLASH_ACCESS_KEY = "kPtZY-3eUqZh3Epo9iBbGufCXwyAPUyrZsR29B8j218"
-
-# Получаем WEBHOOK_URL из переменных окружения (оставлено для обратной совместимости)
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-
-# Если WEBHOOK_URL не задан, формируем из RENDER_EXTERNAL_URL
-if not WEBHOOK_URL:
-    render_url = os.getenv("RENDER_EXTERNAL_URL")
-    if render_url:
-        WEBHOOK_URL = render_url
-    else:
-        WEBHOOK_URL = "https://nofuss-bot.onrender.com"
 
 # ---------- БАЗА ДАННЫХ ----------
 db = sqlite3.connect("nofuss.db", check_same_thread=False)
@@ -846,6 +839,32 @@ def generate_post(article, index, total, source_name):
     post += f"💭 {reflection}"
     image_url = get_news_image(title_ru)
     return {'text': post, 'image': image_url}
+
+# ---------- HTTP сервер для health check через aiohttp ----------
+async def health(request):
+    return web.Response(text="OK")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+
+    await site.start()
+
+    logger.info(f"Health check server started on port {port}")
+    return runner
+
+def run_health_server():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_web_server())
+    loop.run_forever()
 
 # ---------- ОБРАБОТЧИКИ ----------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2108,15 +2127,14 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
+    # Запускаем health-check сервер в отдельном потоке
+    threading.Thread(
+        target=run_health_server,
+        daemon=True
+    ).start()
+    
     # Создаем приложение
     application = Application.builder().token(TOKEN).build()
-    
-    # Удаляем вебхук
-    try:
-        application.bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook deleted successfully")
-    except Exception as e:
-        logger.warning(f"Error deleting webhook: {e}")
     
     # Регистрируем обработчики
     conv_handler = ConversationHandler(
@@ -2204,11 +2222,9 @@ def main():
     
     logger.info("Bot started successfully!")
     
-    # Запускаем polling (самый стабильный способ)
+    # Запускаем polling
     application.run_polling(
         poll_interval=1.0,
-        timeout=10,
-        read_timeout=2,
         drop_pending_updates=True
     )
 
