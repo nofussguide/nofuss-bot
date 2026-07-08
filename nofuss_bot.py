@@ -14,6 +14,8 @@ from typing import List, Dict, Optional, Any
 import html
 import random
 import textwrap
+import signal
+import sys
 
 # Для перевода
 from deep_translator import GoogleTranslator
@@ -22,7 +24,10 @@ from deep_translator import GoogleTranslator
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -661,7 +666,7 @@ def contact_keyboard():
 def remove_keyboard():
     return ReplyKeyboardMarkup([[]], resize_keyboard=True)
 
-# ---------- НОВОСТИ ----------
+# ---------- НОВОСТИ (только рабочие источники) ----------
 TECH_RSS_FEEDS = {
     "The Verge": "https://www.theverge.com/rss/index.xml",
     "TechCrunch": "https://techcrunch.com/feed/",
@@ -673,9 +678,7 @@ TECH_RSS_FEEDS = {
     "XDA Developers": "https://www.xda-developers.com/feed/",
     "Android Authority": "https://www.androidauthority.com/feed/",
     "GSMArena": "https://www.gsmarena.com/rss-news-reviews.php3",
-    "Notebookcheck": "https://www.notebookcheck.net/feed/",
     "Digital Trends": "https://www.digitaltrends.com/feed/",
-    "Pocket-lint": "https://www.pocket-lint.com/rss",
     "Android Central": "https://www.androidcentral.com/feeds/all",
     "iMore": "https://www.imore.com/rss.xml",
     "9to5Mac": "https://9to5mac.com/feed/",
@@ -694,8 +697,6 @@ TECH_RSS_FEEDS = {
     "Microsoft Blog": "https://blogs.microsoft.com/feed/",
     "NVIDIA Blog": "https://blogs.nvidia.com/feed/",
     "Xiaomi Blog": "https://blog.mi.com/en/feed/",
-    "Honor Blog": "https://www.honor.com/global/feed/",
-    "Huawei Blog": "https://consumer.huawei.com/en/community/feed/",
     "Samsung Newsroom": "https://news.samsung.com/global/feed",
     "OnePlus Blog": "https://www.oneplus.com/feed",
     "Oppo Blog": "https://www.oppo.com/en/feed/",
@@ -840,14 +841,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
-    # Очищаем данные пользователя
     clear_user_data(context)
     
     cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
                    (user_id, update.message.from_user.username or '', user_name))
     db.commit()
     
-    # Проверяем наличие черновика
     draft = load_draft(user_id)
     if draft:
         keyboard = InlineKeyboardMarkup([
@@ -877,7 +876,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CATEGORY
 
 async def delete_draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик для кнопки 'Начать заново' - удаляет черновик"""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -901,7 +899,6 @@ async def delete_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return CATEGORY
 
-# ---------- ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ----------
 async def continue_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -912,7 +909,6 @@ async def continue_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Черновик не найден")
         return CATEGORY
     
-    # Восстанавливаем данные из черновика
     for key, value in draft.items():
         if key != '_last_step':
             context.user_data[key] = value
@@ -1675,7 +1671,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     
-    # Пропускаем команды, чтобы они обрабатывались CommandHandler
     if update.message.text and update.message.text.startswith('/'):
         return
     
@@ -1884,7 +1879,6 @@ async def handle_edit_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(get_text(user_id, 'post_updated'))
         await send_post_to_admin(update, context, editing_index)
     else:
-        # Это чат с пользователем
         await handle_admin_chat(update, context)
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2061,7 +2055,6 @@ async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
 async def handle_user_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик сообщений от пользователя в админский чат"""
     user_id = update.message.from_user.id
     if user_id == ADMIN_ID:
         return
@@ -2071,12 +2064,24 @@ async def handle_user_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💬 Сообщение от пользователя @{update.message.from_user.username or 'без юзернейма'} (ID: {user_id}):\n\n{update.message.text}"
     )
 
+def signal_handler(sig, frame):
+    logger.info(f"Received signal {sig}, shutting down...")
+    sys.exit(0)
+
 # ---------- ЗАПУСК ----------
 async def main():
+    # Регистрируем обработчики сигналов для корректного завершения
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     app = Application.builder().token(TOKEN).build()
     
-    # Удаляем вебхук при запуске
-    await app.bot.delete_webhook(drop_pending_updates=True)
+    try:
+        # Удаляем вебхук при запуске
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook deleted successfully")
+    except Exception as e:
+        logger.warning(f"Error deleting webhook: {e}")
     
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_command)],
@@ -2161,12 +2166,28 @@ async def main():
     app.add_handler(MessageHandler(filters.Regex('💬 Связаться'), contact_direct))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
     
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
+    logger.info("Bot started successfully!")
     
-    while True:
-        await asyncio.sleep(3600)
+    try:
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling()
+        logger.info("Polling started...")
+        
+        # Бесконечный цикл с обработкой сигналов
+        while True:
+            await asyncio.sleep(1)
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Shutting down gracefully...")
+    finally:
+        await app.stop()
+        logger.info("Bot stopped")
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        sys.exit(1)
