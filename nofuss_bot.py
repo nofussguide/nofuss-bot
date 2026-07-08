@@ -69,6 +69,14 @@ CREATE TABLE IF NOT EXISTS feedback (
 )
 """)
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS drafts (
+    user_id INTEGER PRIMARY KEY,
+    data TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
 cursor.execute("DROP TRIGGER IF EXISTS set_request_number")
 cursor.execute("""
 CREATE TRIGGER IF NOT EXISTS set_request_number 
@@ -95,7 +103,7 @@ CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING
 # ---------- МУЛЬТИЯЗЫЧНОСТЬ ----------
 TRANSLATIONS = {
     'ru': {
-        'welcome': "👋 Добро пожаловать в NoFuss Guide!\n\n🔍 Бот автоматически собирает все требования, а итоговый подбор выполняет специалист.\n\n📋 Напишите /commands чтобы увидеть все доступные команды.",
+        'welcome': "👋 Добро пожаловать в NoFuss Guide!\n\n🔍 Бот собирает ваши пожелания, а подбор делает специалист.\n\n📋 Напишите /commands чтобы увидеть все доступные команды.",
         'choose_category': "📱 Выберите категорию техники:",
         'choose_budget': "💰 Выберите бюджет:",
         'choose_priority': "🎯 Что для вас наиболее важно?",
@@ -105,7 +113,7 @@ TRANSLATIONS = {
         'confirm_btn': "✅ Подтвердить заявку",
         'edit_btn': "✏️ Редактировать данные",
         'contact_request': "📞 Поделитесь контактом для связи:",
-        'request_accepted': "✅ Заявка принята!",
+        'request_accepted': "✅ Заявка принята!\n\n🎉 Спасибо за обращение в NoFuss Guide!\n\nСпециалист изучит ваши требования и подберёт наиболее подходящие варианты техники.\n\n⏱ Обычно ответ занимает от нескольких часов до одного дня.\n\n📢 Подпишитесь на наш канал: https://t.me/NoFussGuide",
         'new_request': "🆕 Новая заявка",
         'my_requests': "📋 Мои заявки",
         'home': "🏠 Главное меню",
@@ -146,7 +154,7 @@ TRANSLATIONS = {
         'settings_title': "⚙️ **Настройки**\n\nВыберите раздел для настройки:",
         'settings_lang': "🌐 **Выберите язык:**",
         'settings_theme': "🎨 **Выберите тему:**",
-        'about_text': "ℹ️ **О проекте NoFuss Guide**\n\n🤖 Бот автоматически собирает все требования, а итоговый подбор выполняет специалист.\n\n📅 Версия: 2.0\n📧 Контакты: @goojifeed\n📢 Канал: @NoFussGuide\n\nСпасибо, что пользуетесь нашим сервисом! 🙏",
+        'about_text': "ℹ️ **О проекте NoFuss Guide**\n\n🤖 Бот собирает ваши пожелания, а подбор делает специалист.\n\n📅 Версия: 2.0\n📧 Контакты: @goojifeed\n📢 Канал: @NoFussGuide\n\nСпасибо, что пользуетесь нашим сервисом! 🙏",
         'commands_list': "📋 **Список команд**\n\n/start - Начать оформление заявки\n/stats - Моя статистика\n/settings - Настройки\n/faq - Частые вопросы\n/about - О проекте\n/commands - Список команд\n/cancel - Отменить действие",
         'faq_text': "❓ Частые вопросы\n\n• Как быстро отвечаем? — В течение дня\n• Подбираете б/у? — Да\n• Стоимость? — Обсуждается индивидуально 🤝\n• Какие бренды? — Любые достойные варианты\n• Как оставить отзыв? — После выполнения заявки появится кнопка",
         'contact_direct': "💬 Написать напрямую: @goojifeed",
@@ -159,10 +167,40 @@ TRANSLATIONS = {
         'publish_error': "❌ Ошибка публикации: {error}",
         'edit_post': "✏️ **Редактирование поста**\n\nОтправьте новый текст (Markdown поддерживается)\n\nПример:\n**Заголовок**\nТекст новости...\n\n🔗 [Подробнее](url)\n\n— *NoFuss Guide*",
         'post_updated': "✅ Пост обновлён!",
-        'post_not_found': "❌ Посты не найдены"
+        'post_not_found': "❌ Посты не найдены",
+        'contact_admin': "📞 Связаться со специалистом",
+        'contact_admin_text': "💬 Вы можете написать специалисту напрямую:\n@goojifeed\n\nИли просто нажмите кнопку ниже, чтобы открыть чат:",
+        'share_bot': "📤 Поделиться ботом",
+        'share_text': "🤖 Отличный бот для подбора техники! Присоединяйтесь: @NoFussGuideBot",
+        'draft_found': "📝 У вас есть незавершённая заявка. Хотите продолжить?",
+        'draft_continue': "✅ Продолжить",
+        'draft_delete': "❌ Начать заново",
+        'admin_stats_title': "📊 NoFuss Guide Analytics",
+        'admin_users': "👥 Пользователей: {users}",
+        'admin_total': "📨 Всего заявок: {total}",
+        'admin_pending': "⏳ В обработке: {pending}",
+        'admin_processing': "🔄 В работе: {processing}",
+        'admin_completed': "✅ Выполнено: {completed}",
+        'admin_cancelled': "❌ Отменено: {cancelled}",
+        'admin_categories': "📂 По категориям:",
+        'admin_recent_title': "📋 Последние 10 заявок:",
+        'admin_no_requests': "❌ Нет заявок",
+        'admin_refresh': "🔄 Обновить",
+        'admin_back': "🏠 Назад",
+        'request_number': "№ заявки",
+        'date': "Дата",
+        'category_label': "Категория",
+        'budget_label': "Бюджет",
+        'priority_label': "Приоритет",
+        'used_label': "Б/У",
+        'models_label': "Модели",
+        'contact_label': "Контакт",
+        'status_label': "Статус",
+        'confirm_date': "Дата подтверждения",
+        'admin_comment': "Комментарий админа"
     },
     'en': {
-        'welcome': "👋 Welcome to NoFuss Guide!\n\n🔍 The bot automatically collects all requirements, and a specialist performs the final selection.\n\n📋 Type /commands to see all available commands.",
+        'welcome': "👋 Welcome to NoFuss Guide!\n\n🔍 The bot collects your preferences, and a specialist makes the selection.\n\n📋 Type /commands to see all available commands.",
         'choose_category': "📱 Choose a category:",
         'choose_budget': "💰 Choose your budget:",
         'choose_priority': "🎯 What matters most to you?",
@@ -172,7 +210,7 @@ TRANSLATIONS = {
         'confirm_btn': "✅ Confirm request",
         'edit_btn': "✏️ Edit data",
         'contact_request': "📞 Share your contact:",
-        'request_accepted': "✅ Request accepted!",
+        'request_accepted': "✅ Request accepted!\n\n🎉 Thank you for contacting NoFuss Guide!\n\nA specialist will review your requirements and select the most suitable options.\n\n⏱ Response time: from a few hours to one day.\n\n📢 Subscribe to our channel: https://t.me/NoFussGuide",
         'new_request': "🆕 New request",
         'my_requests': "📋 My requests",
         'home': "🏠 Main menu",
@@ -213,7 +251,7 @@ TRANSLATIONS = {
         'settings_title': "⚙️ **Settings**\n\nSelect a section to configure:",
         'settings_lang': "🌐 **Select language:**",
         'settings_theme': "🎨 **Select theme:**",
-        'about_text': "ℹ️ **About NoFuss Guide**\n\n🤖 The bot automatically collects all requirements, and a specialist performs the final selection.\n\n📅 Version: 2.0\n📧 Contacts: @goojifeed\n📢 Channel: @NoFussGuide\n\nThank you for using our service! 🙏",
+        'about_text': "ℹ️ **About NoFuss Guide**\n\n🤖 The bot collects your preferences, and a specialist makes the selection.\n\n📅 Version: 2.0\n📧 Contacts: @goojifeed\n📢 Channel: @NoFussGuide\n\nThank you for using our service! 🙏",
         'commands_list': "📋 **Commands list**\n\n/start - Start a request\n/stats - My statistics\n/settings - Settings\n/faq - FAQ\n/about - About project\n/commands - Commands list\n/cancel - Cancel action",
         'faq_text': "❓ FAQ\n\n• How fast do we respond? — Within a day\n• Do you consider used devices? — Yes\n• Cost? — Discussed individually 🤝\n• Which brands? — Any worthy options\n• How to leave feedback? — After request completion, a button will appear",
         'contact_direct': "💬 Contact directly: @goojifeed",
@@ -226,10 +264,40 @@ TRANSLATIONS = {
         'publish_error': "❌ Publication error: {error}",
         'edit_post': "✏️ **Editing post**\n\nSend new text (Markdown supported)\n\nExample:\n**Title**\nNews text...\n\n🔗 [Read more](url)\n\n— *NoFuss Guide*",
         'post_updated': "✅ Post updated!",
-        'post_not_found': "❌ Posts not found"
+        'post_not_found': "❌ Posts not found",
+        'contact_admin': "📞 Contact specialist",
+        'contact_admin_text': "💬 You can contact a specialist directly:\n@goojifeed\n\nOr just click the button below to open the chat:",
+        'share_bot': "📤 Share bot",
+        'share_text': "🤖 Great bot for tech selection! Join: @NoFussGuideBot",
+        'draft_found': "📝 You have an unfinished request. Do you want to continue?",
+        'draft_continue': "✅ Continue",
+        'draft_delete': "❌ Start over",
+        'admin_stats_title': "📊 NoFuss Guide Analytics",
+        'admin_users': "👥 Users: {users}",
+        'admin_total': "📨 Total requests: {total}",
+        'admin_pending': "⏳ Pending: {pending}",
+        'admin_processing': "🔄 In progress: {processing}",
+        'admin_completed': "✅ Completed: {completed}",
+        'admin_cancelled': "❌ Cancelled: {cancelled}",
+        'admin_categories': "📂 By category:",
+        'admin_recent_title': "📋 Last 10 requests:",
+        'admin_no_requests': "❌ No requests",
+        'admin_refresh': "🔄 Refresh",
+        'admin_back': "🏠 Back",
+        'request_number': "Request #",
+        'date': "Date",
+        'category_label': "Category",
+        'budget_label': "Budget",
+        'priority_label': "Priority",
+        'used_label': "Used",
+        'models_label': "Models",
+        'contact_label': "Contact",
+        'status_label': "Status",
+        'confirm_date': "Confirm date",
+        'admin_comment': "Admin comment"
     },
     'kk': {
-        'welcome': "👋 NoFuss Guide-ге қош келдіңіз!\n\n🔍 Бот барлық талаптарды автоматты түрде жинайды, ал нақты таңдауды маман жасайды.\n\n📋 Барлық қолжетімді командаларды көру үшін /commands жазыңыз.",
+        'welcome': "👋 NoFuss Guide-ге қош келдіңіз!\n\n🔍 Бот сіздің тілектеріңізді жинайды, ал таңдауды маман жасайды.\n\n📋 Барлық қолжетімді командаларды көру үшін /commands жазыңыз.",
         'choose_category': "📱 Техника санатын таңдаңыз:",
         'choose_budget': "💰 Бюджетіңізді таңдаңыз:",
         'choose_priority': "🎯 Сіз үшін ең маңыздысы не?",
@@ -239,7 +307,7 @@ TRANSLATIONS = {
         'confirm_btn': "✅ Өтінімді растау",
         'edit_btn': "✏️ Деректерді өңдеу",
         'contact_request': "📞 Байланыс үшін контактіңізбен бөлісіңіз:",
-        'request_accepted': "✅ Өтінім қабылданды!",
+        'request_accepted': "✅ Өтінім қабылданды!\n\n🎉 NoFuss Guide-ге хабарласқаныңыз үшін рахмет!\n\nМаман сіздің талаптарыңызды қарап, ең қолайлы нұсқаларды таңдайды.\n\n⏱ Жауап уақыты: бірнеше сағаттан бір күнге дейін.\n\n📢 Біздің арнаға жазылыңыз: https://t.me/NoFussGuide",
         'new_request': "🆕 Жаңа өтінім",
         'my_requests': "📋 Менің өтінімдерім",
         'home': "🏠 Басты мәзір",
@@ -280,7 +348,7 @@ TRANSLATIONS = {
         'settings_title': "⚙️ **Баптаулар**\n\nБаптау үшін бөлімді таңдаңыз:",
         'settings_lang': "🌐 **Тілді таңдаңыз:**",
         'settings_theme': "🎨 **Тақырыпты таңдаңыз:**",
-        'about_text': "ℹ️ **NoFuss Guide жобасы туралы**\n\n🤖 Бот барлық талаптарды автоматты түрде жинайды, ал нақты таңдауды маман жасайды.\n\n📅 Нұсқа: 2.0\n📧 Байланыс: @goojifeed\n📢 Арна: @NoFussGuide\n\nБіздің сервисті пайдаланғаныңыз үшін рахмет! 🙏",
+        'about_text': "ℹ️ **NoFuss Guide жобасы туралы**\n\n🤖 Бот сіздің тілектеріңізді жинайды, ал таңдауды маман жасайды.\n\n📅 Нұсқа: 2.0\n📧 Байланыс: @goojifeed\n📢 Арна: @NoFussGuide\n\nБіздің сервисті пайдаланғаныңыз үшін рахмет! 🙏",
         'commands_list': "📋 **Командалар тізімі**\n\n/start - Өтінімді бастау\n/stats - Менің статистикам\n/settings - Баптаулар\n/faq - Жиі қойылатын сұрақтар\n/about - Жоба туралы\n/commands - Командалар тізімі\n/cancel - Әрекетті болдырмау",
         'faq_text': "❓ Жиі қойылатын сұрақтар\n\n• Қаншалықты тез жауап береміз? — Күн ішінде\n• Пайдаланылған техниканы қарастырасыз ба? — Иә\n• Құны? — Жеке келісіледі 🤝\n• Қандай брендтер? — Кез келген лайықты нұсқалар\n• Пікірді қалай қалдыруға болады? — Өтінім орындалғаннан кейін батырма пайда болады",
         'contact_direct': "💬 Тікелей хат жазу: @goojifeed",
@@ -293,7 +361,37 @@ TRANSLATIONS = {
         'publish_error': "❌ Жариялау қатесі: {error}",
         'edit_post': "✏️ **Посты өңдеу**\n\nЖаңа мәтінді жіберіңіз (Markdown қолдау көрсетеді)\n\nМысал:\n**Тақырып**\nЖаңалық мәтіні...\n\n🔗 [Толығырақ](url)\n\n— *NoFuss Guide*",
         'post_updated': "✅ Пост жаңартылды!",
-        'post_not_found': "❌ Посттар табылмады"
+        'post_not_found': "❌ Посттар табылмады",
+        'contact_admin': "📞 Маманға хабарласу",
+        'contact_admin_text': "💬 Сіз маманға тікелей хат жаза аласыз:\n@goojifeed\n\nНемесе төмендегі батырманы басып, чатты ашыңыз:",
+        'share_bot': "📤 Ботпен бөлісу",
+        'share_text': "🤖 Техника таңдауға арналған тамаша бот! Қосылыңыз: @NoFussGuideBot",
+        'draft_found': "📝 Сізде аяқталмаған өтінім бар. Жалғастырғыңыз келе ме?",
+        'draft_continue': "✅ Жалғастыру",
+        'draft_delete': "❌ Қайта бастау",
+        'admin_stats_title': "📊 NoFuss Guide Аналитика",
+        'admin_users': "👥 Пайдаланушылар: {users}",
+        'admin_total': "📨 Барлық өтінім: {total}",
+        'admin_pending': "⏳ Өңделуде: {pending}",
+        'admin_processing': "🔄 Жұмыс барысында: {processing}",
+        'admin_completed': "✅ Орындалды: {completed}",
+        'admin_cancelled': "❌ Болдырылмады: {cancelled}",
+        'admin_categories': "📂 Санаттар бойынша:",
+        'admin_recent_title': "📋 Соңғы 10 өтінім:",
+        'admin_no_requests': "❌ Өтінім жоқ",
+        'admin_refresh': "🔄 Жаңарту",
+        'admin_back': "🏠 Артқа",
+        'request_number': "Өтінім №",
+        'date': "Күні",
+        'category_label': "Санат",
+        'budget_label': "Бюджет",
+        'priority_label': "Басымдық",
+        'used_label': "Пайдаланылған",
+        'models_label': "Модельдер",
+        'contact_label': "Байланыс",
+        'status_label': "Мәртебе",
+        'confirm_date': "Растау күні",
+        'admin_comment': "Админ пікірі"
     }
 }
 
@@ -401,6 +499,18 @@ def get_status_text(status, user_id=None):
     status_map = {'pending': '⏳ В обработке', 'processing': '🔄 В работе', 'completed': '✅ Выполнена', 'cancelled': '❌ Отменена'}
     return status_map.get(status, status)
 
+def save_draft(user_id, data):
+    cursor.execute("INSERT OR REPLACE INTO drafts(user_id, data) VALUES(?, ?)", (user_id, json.dumps(data, ensure_ascii=False)))
+    db.commit()
+
+def load_draft(user_id):
+    row = cursor.execute("SELECT data FROM drafts WHERE user_id = ?", (user_id,)).fetchone()
+    return json.loads(row[0]) if row else {}
+
+def delete_draft(user_id):
+    cursor.execute("DELETE FROM drafts WHERE user_id = ?", (user_id,))
+    db.commit()
+
 # ---------- ИНЛАЙН-КЛАВИАТУРЫ ----------
 def categories_inline(user_id):
     buttons = []
@@ -488,7 +598,8 @@ def after_submit_inline(user_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(get_text(user_id, 'new_request'), callback_data="new_request")],
         [InlineKeyboardButton(get_text(user_id, 'my_requests'), callback_data="my_requests")],
-        [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
+        [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")],
+        [InlineKeyboardButton(get_text(user_id, 'contact_admin'), callback_data="contact_admin")]
     ])
 
 def settings_inline(user_id):
@@ -497,6 +608,7 @@ def settings_inline(user_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"🌐 Язык: {LANGUAGES.get(lang, 'Русский')}", callback_data="settings_lang")],
         [InlineKeyboardButton(f"🎨 Тема: {THEMES.get(theme, 'Светлая')}", callback_data="settings_theme")],
+        [InlineKeyboardButton(get_text(user_id, 'share_bot'), callback_data="share_bot")],
         [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
     ])
 
@@ -691,12 +803,17 @@ def generate_post(article, index, total, source_name):
     reflection = random.choice(reflections)
     formatted_title = format_paragraph(title_ru, width=50)
     formatted_desc = format_paragraph(desc_ru, width=50) if desc_ru else ''
+    
+    # Красивый разделитель
+    separator = "━━━━━━━━━━━━━━━━━━━━━━"
+    
     post = f"🔹 **{formatted_title}**\n\n"
     if formatted_desc:
         post += f"{formatted_desc}\n\n"
     post += f"🔗 [Подробнее]({link})\n\n"
     post += f"📌 {source_name}\n"
     post += f"📅 {datetime.now().strftime('%d.%m.%Y')}\n\n"
+    post += f"*{separator}*\n\n"
     post += f"— *NoFuss Guide*\n\n"
     post += f"💭 {reflection}"
     image_url = get_news_image(title_ru)
@@ -712,6 +829,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                    (user_id, update.message.from_user.username or '', user_name))
     db.commit()
     
+    # Проверяем черновик
+    draft = load_draft(user_id)
+    if draft:
+        await update.message.reply_text(
+            get_text(user_id, 'draft_found'),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(get_text(user_id, 'draft_continue'), callback_data="continue_draft")],
+                [InlineKeyboardButton(get_text(user_id, 'draft_delete'), callback_data="delete_draft")]
+            ])
+        )
+        return
+    
     await update.message.reply_text(
         f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
         f"📱 {get_text(user_id, 'choose_category')}",
@@ -726,6 +855,92 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return CATEGORY
 
+async def continue_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    draft = load_draft(user_id)
+    if not draft:
+        await query.edit_message_text("❌ Черновик не найден")
+        return
+    
+    for key, value in draft.items():
+        context.user_data[key] = value
+    
+    await query.edit_message_text("📝 Продолжаем оформление заявки...")
+    
+    last_step = draft.get('_last_step', 'category')
+    if last_step == 'category':
+        await query.message.reply_text(
+            f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
+            f"{get_text(user_id, 'choose_category')}",
+            reply_markup=categories_inline(user_id)
+        )
+        return CATEGORY
+    elif last_step == 'budget':
+        category = context.user_data.get('category', '📱 Смартфоны')
+        await query.message.reply_text(
+            f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
+            f"✅ Выбрано: {category}\n\n"
+            f"{get_text(user_id, 'choose_budget')}",
+            reply_markup=budget_inline(category, user_id)
+        )
+        return BUDGET
+    elif last_step == 'priority':
+        category = context.user_data.get('category', '📱 Смартфоны')
+        await query.message.reply_text(
+            f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
+            f"✅ Категория: {category}\n"
+            f"💰 Бюджет: {context.user_data.get('budget')}\n\n"
+            f"{get_text(user_id, 'choose_priority')}",
+            reply_markup=priority_inline(category, user_id)
+        )
+        return PRIORITY
+    elif last_step == 'used':
+        await query.message.reply_text(
+            f"{get_progress_bar(4)} {get_step_text(4)}\n\n"
+            f"✅ Категория: {context.user_data.get('category')}\n"
+            f"💰 Бюджет: {context.user_data.get('budget')}\n"
+            f"🎯 Приоритет: {context.user_data.get('priority')}\n\n"
+            f"{get_text(user_id, 'choose_used')}",
+            reply_markup=used_inline(user_id)
+        )
+        return USED
+    elif last_step == 'models_choice':
+        await query.message.reply_text(
+            f"{get_progress_bar(5)} {get_step_text(5)}\n\n"
+            f"✅ Категория: {context.user_data.get('category')}\n"
+            f"💰 Бюджет: {context.user_data.get('budget')}\n"
+            f"🎯 Приоритет: {context.user_data.get('priority')}\n"
+            f"♻️ Б/У: {context.user_data.get('used')}\n\n"
+            f"{get_text(user_id, 'choose_models')}",
+            reply_markup=models_inline(user_id)
+        )
+        return MODELS
+
+async def delete_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    delete_draft(user_id)
+    await query.edit_message_text("✅ Черновик удалён. Начинаем заново.")
+    
+    user_name = query.from_user.first_name or ""
+    await query.message.reply_text(
+        f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
+        f"📱 {get_text(user_id, 'choose_category')}",
+        parse_mode="Markdown"
+    )
+    
+    await query.message.reply_text(
+        f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
+        f"{get_text(user_id, 'choose_category')}",
+        reply_markup=categories_inline(user_id)
+    )
+    return CATEGORY
+
 async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -733,6 +948,8 @@ async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     category = CATEGORIES[int(query.data.split("_")[1])]
     context.user_data['category'] = category
+    context.user_data['_last_step'] = 'budget'
+    save_draft(user_id, context.user_data)
     
     await query.edit_message_text(
         f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
@@ -750,11 +967,15 @@ async def handle_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
     category = context.user_data.get('category', '📱 Смартфоны')
     budget = BUDGETS.get(category, [])[int(query.data.split("_")[1])]
     context.user_data['budget'] = budget
+    context.user_data['_last_step'] = 'priority'
+    save_draft(user_id, context.user_data)
     
     if category in NO_PRIORITY_CATEGORIES:
         context.user_data['priority'] = "Не требуется"
         context.user_data['used'] = "Не требуется"
         context.user_data['models'] = "Не указано"
+        context.user_data['_last_step'] = 'confirm'
+        save_draft(user_id, context.user_data)
         await show_confirm(query, context, user_id)
         return CONFIRM
     
@@ -775,6 +996,8 @@ async def handle_priority(update: Update, context: ContextTypes.DEFAULT_TYPE):
     category = context.user_data.get('category', '📱 Смартфоны')
     priority = PRIORITIES.get(category, [])[int(query.data.split("_")[1])]
     context.user_data['priority'] = priority
+    context.user_data['_last_step'] = 'used'
+    save_draft(user_id, context.user_data)
     
     await query.edit_message_text(
         f"{get_progress_bar(4)} {get_step_text(4)}\n\n"
@@ -794,6 +1017,8 @@ async def handle_used(update: Update, context: ContextTypes.DEFAULT_TYPE):
     used_map = {'used_yes': 'Да', 'used_no': 'Нет', 'used_any': 'Не принципиально'}
     used = used_map.get(query.data, 'Не указано')
     context.user_data['used'] = used
+    context.user_data['_last_step'] = 'models_choice'
+    save_draft(user_id, context.user_data)
     
     await query.edit_message_text(
         f"{get_progress_bar(5)} {get_step_text(5)}\n\n"
@@ -820,12 +1045,16 @@ async def handle_models(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MODELS
     else:
         context.user_data['models'] = "Не указано"
+        context.user_data['_last_step'] = 'confirm'
+        save_draft(user_id, context.user_data)
         await show_confirm(query, context, user_id)
         return CONFIRM
 
 async def models_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     context.user_data['models'] = update.message.text
+    context.user_data['_last_step'] = 'confirm'
+    save_draft(user_id, context.user_data)
     await show_confirm(update, context, user_id)
     return CONFIRM
 
@@ -863,6 +1092,7 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return CONFIRM
         
+        delete_draft(user_id)
         await query.message.delete()
         await query.message.reply_text(
             get_text(user_id, 'contact_request'),
@@ -878,6 +1108,7 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return EDIT_SELECT
     
     elif query.data == "home":
+        delete_draft(user_id)
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
@@ -934,6 +1165,7 @@ async def handle_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return MODELS
     
     elif action == "home":
+        delete_draft(user_id)
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
@@ -949,6 +1181,7 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = query.data
     
     if action == "home":
+        delete_draft(user_id)
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
@@ -1028,12 +1261,10 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "SELECT request_number FROM requests WHERE id = ?", (request_id,)
     ).fetchone()[0]
     
+    delete_draft(user_id)
+    
     await update.message.reply_text(
-        f"{get_text(user_id, 'request_accepted')}\n\n"
-        "🎉 Спасибо за обращение в NoFuss Guide!\n\n"
-        "Специалист изучит ваши требования и подберёт наиболее подходящие варианты техники.\n\n"
-        "⏱ Обычно ответ занимает от нескольких часов до одного дня.\n\n"
-        "📢 Подпишитесь на наш канал: https://t.me/NoFussGuide",
+        get_text(user_id, 'request_accepted'),
         reply_markup=remove_keyboard()
     )
     
@@ -1119,6 +1350,16 @@ async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return AFTER_SUBMIT
     
+    elif action == "contact_admin":
+        await query.edit_message_text(
+            get_text(user_id, 'contact_admin_text'),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📞 Написать @goojifeed", url="https://t.me/goojifeed")],
+                [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
+            ])
+        )
+        return AFTER_SUBMIT
+    
     elif action == "home":
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
@@ -1195,6 +1436,16 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             get_text(user_id, 'settings_theme'),
             parse_mode="Markdown",
             reply_markup=theme_select_inline(user_id)
+        )
+        return
+    
+    elif query.data == "share_bot":
+        await query.edit_message_text(
+            get_text(user_id, 'share_text'),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📤 Поделиться", switch_inline_query="NoFuss Guide - бот для подбора техники!")],
+                [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
+            ])
         )
         return
     
@@ -1330,10 +1581,31 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
         get_text(user_id, 'status_updated', status=f"{status_emoji} {status_text}")
     )
     
+    # После изменения статуса добавляем кнопку связи со специалистом
+    await query.get_bot().send_message(
+        user_id,
+        get_text(user_id, 'contact_admin_text'),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📞 Написать @goojifeed", url="https://t.me/goojifeed")],
+            [InlineKeyboardButton("📋 Мои заявки", callback_data="my_requests")]
+        ])
+    )
+    
     if new_status == "completed":
         await request_feedback(request_id, user_id)
     
-    await query.edit_message_text(f"{query.message.text}\n\n✅ Статус обновлён: {status_text}")
+    # Обновляем сообщение админа с новыми кнопками
+    admin_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 В работу", callback_data=f"request_status_{request_id}_processing")],
+        [InlineKeyboardButton("✅ Выполнена", callback_data=f"request_status_{request_id}_completed")],
+        [InlineKeyboardButton("❌ Отменить", callback_data=f"request_status_{request_id}_cancelled")],
+        [InlineKeyboardButton("💬 Написать", callback_data=f"request_chat_{request_id}")]
+    ])
+    
+    await query.edit_message_text(
+        f"{query.message.text}\n\n✅ Статус обновлён: {status_text}",
+        reply_markup=admin_keyboard
+    )
 
 # ---------- КОМАНДЫ ----------
 async def commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1363,6 +1635,8 @@ async def contact_direct(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("💬 Написать напрямую: @goojifeed")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    delete_draft(user_id)
     await update.message.reply_text("❌ Действие отменено.", reply_markup=remove_keyboard())
     return ConversationHandler.END
 
@@ -1376,10 +1650,10 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- НОВОСТИ (АДМИН) ----------
 async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Только для админа")
+        await update.message.reply_text(get_text(update.message.from_user.id, 'admin_only'))
         return
     
-    status_msg = await update.message.reply_text("🔍 Собираю свежие новости... Это может занять 30-40 секунд.")
+    status_msg = await update.message.reply_text(get_text(ADMIN_ID, 'collecting_news'))
     
     all_news = []
     for source_name, url in TECH_RSS_FEEDS.items():
@@ -1394,7 +1668,7 @@ async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
     
     if not all_news:
-        await status_msg.edit_text("❌ Новостей не найдено. Попробуйте позже.")
+        await status_msg.edit_text(get_text(ADMIN_ID, 'news_not_found'))
         return
     
     random.shuffle(all_news)
@@ -1418,7 +1692,7 @@ async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'all_news': selected_news
     }
     
-    await status_msg.edit_text(f"✅ Найдено {len(selected_news)} новостей! Отправляю посты...")
+    await status_msg.edit_text(get_text(ADMIN_ID, 'news_found', count=len(selected_news)))
     await send_post_to_admin(update, context, 0)
 
 async def send_post_to_admin(update, context, index):
@@ -1427,7 +1701,7 @@ async def send_post_to_admin(update, context, index):
     posts = data.get('posts', [])
     
     if not posts or index >= len(posts):
-        await update.message.reply_text("❌ Посты не найдены")
+        await update.message.reply_text(get_text(user_id, 'post_not_found'))
         return
     
     post = posts[index]
@@ -1585,13 +1859,14 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     stats = cursor.execute("SELECT category, COUNT(*) FROM requests GROUP BY category").fetchall()
 
-    text = f"📊 NoFuss Guide Analytics\n\n"
-    text += f"👥 Пользователей: {users}\n"
-    text += f"📨 Всего заявок: {requests_total}\n"
-    text += f"⏳ В обработке: {pending}\n"
-    text += f"🔄 В работе: {processing}\n"
-    text += f"✅ Выполнено: {completed}\n"
-    text += f"❌ Отменено: {cancelled}\n\n"
+    text = f"{get_text(ADMIN_ID, 'admin_stats_title')}\n\n"
+    text += f"{get_text(ADMIN_ID, 'admin_users', users=users)}\n"
+    text += f"{get_text(ADMIN_ID, 'admin_total', total=requests_total)}\n"
+    text += f"{get_text(ADMIN_ID, 'admin_pending', pending=pending)}\n"
+    text += f"{get_text(ADMIN_ID, 'admin_processing', processing=processing)}\n"
+    text += f"{get_text(ADMIN_ID, 'admin_completed', completed=completed)}\n"
+    text += f"{get_text(ADMIN_ID, 'admin_cancelled', cancelled=cancelled)}\n\n"
+    text += f"{get_text(ADMIN_ID, 'admin_categories')}\n"
 
     for category, count in stats:
         text += f"  • {category}: {count}\n"
@@ -1616,10 +1891,10 @@ async def admin_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).fetchall()
     
     if not requests:
-        await query.edit_message_text("❌ Нет заявок")
+        await query.edit_message_text(get_text(ADMIN_ID, 'admin_no_requests'))
         return
     
-    text = "📋 Последние 10 заявок:\n\n"
+    text = f"{get_text(ADMIN_ID, 'admin_recent_title')}\n\n"
     for req in requests:
         status = get_status_emoji(req[4])
         date = req[5][:16] if req[5] else ''
@@ -1629,8 +1904,8 @@ async def admin_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Обновить", callback_data="admin_recent_refresh")],
-            [InlineKeyboardButton("🏠 Назад", callback_data="admin_back")]
+            [InlineKeyboardButton(get_text(ADMIN_ID, 'admin_refresh'), callback_data="admin_recent_refresh")],
+            [InlineKeyboardButton(get_text(ADMIN_ID, 'admin_back'), callback_data="admin_back")]
         ])
     )
 
@@ -1647,15 +1922,56 @@ async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         return
-    rows = cursor.execute("SELECT * FROM requests").fetchall()
-    filename = f"export_{int(time.time())}.csv"
+    
+    rows = cursor.execute("""
+        SELECT 
+            request_number,
+            created_at, 
+            category, 
+            budget, 
+            priority, 
+            used, 
+            models, 
+            contact, 
+            status,
+            confirmed_at
+        FROM requests 
+        ORDER BY created_at DESC
+    """).fetchall()
+    
+    filename = f"export_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+    
     with open(filename, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
-        writer.writerow(["№ заявки", "ID", "User", "Category", "Budget", "Contact", "Priority", "Used", "Models", "Status", "Date"])
-        writer.writerows(rows)
-    with open(filename, "rb") as f:
-        await update.message.reply_document(document=f, filename=filename)
-    os.remove(filename)
+        writer.writerow([
+            get_text(ADMIN_ID, 'request_number'),
+            get_text(ADMIN_ID, 'date'),
+            get_text(ADMIN_ID, 'category_label'),
+            get_text(ADMIN_ID, 'budget_label'),
+            get_text(ADMIN_ID, 'priority_label'),
+            get_text(ADMIN_ID, 'used_label'),
+            get_text(ADMIN_ID, 'models_label'),
+            get_text(ADMIN_ID, 'contact_label'),
+            get_text(ADMIN_ID, 'status_label'),
+            get_text(ADMIN_ID, 'confirm_date')
+        ])
+        
+        for row in rows:
+            formatted_row = []
+            for item in row:
+                if item is None:
+                    formatted_row.append("")
+                else:
+                    formatted_row.append(str(item))
+            writer.writerow(formatted_row)
+    
+    await update.message.reply_document(FSInputFile(filename))
+    
+    await asyncio.sleep(5)
+    try:
+        os.remove(filename)
+    except:
+        pass
 
 # ---------- ЧАТ С АДМИНОМ ----------
 async def handle_request_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1710,7 +2026,9 @@ async def main():
         states={
             CATEGORY: [
                 CallbackQueryHandler(handle_category, pattern="^cat_"),
-                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_categories)$")
+                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_categories)$"),
+                CallbackQueryHandler(continue_draft, pattern="^continue_draft$"),
+                CallbackQueryHandler(delete_draft, pattern="^delete_draft$")
             ],
             BUDGET: [
                 CallbackQueryHandler(handle_budget, pattern="^budget_"),
@@ -1740,7 +2058,7 @@ async def main():
                 CallbackQueryHandler(handle_navigation, pattern="^home$")
             ],
             AFTER_SUBMIT: [
-                CallbackQueryHandler(handle_after_submit, pattern="^(new_request|my_requests|home)$")
+                CallbackQueryHandler(handle_after_submit, pattern="^(new_request|my_requests|contact_admin|home)$")
             ],
             FEEDBACK: [
                 CallbackQueryHandler(handle_feedback, pattern="^feedback_")
@@ -1772,7 +2090,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(admin_recent, pattern="^admin_recent$"))
     app.add_handler(CallbackQueryHandler(admin_recent_refresh, pattern="^admin_recent_refresh$"))
     app.add_handler(CallbackQueryHandler(admin_back, pattern="^admin_back$"))
-    app.add_handler(CallbackQueryHandler(settings_callback, pattern="^(settings_lang|settings_theme|settings_back|home)$"))
+    app.add_handler(CallbackQueryHandler(settings_callback, pattern="^(settings_lang|settings_theme|settings_back|share_bot|home)$"))
     app.add_handler(CallbackQueryHandler(language_select, pattern="^lang_"))
     app.add_handler(CallbackQueryHandler(theme_select, pattern="^theme_"))
     app.add_handler(MessageHandler(filters.Regex('❓ FAQ'), faq))
