@@ -9,9 +9,6 @@ ADMIN_ID = 479330946
 
 # Создаём экземпляры бота и диспетчера
 bot = Bot(token=TOKEN)
-dp = Dispatcher()  # Для aiogram 3.x
-
-# ... все ваши обработчики (@dp.message, @dp.callback_query) ...
 
 python
 import asyncio
