@@ -2,8 +2,6 @@ import asyncio
 import os
 import sqlite3
 # ... другие импорты ...
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
@@ -26,7 +24,6 @@ import hashlib
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-from aiohttp import web
 import logging
 from typing import List, Dict
 import html
