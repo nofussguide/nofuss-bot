@@ -10,7 +10,6 @@ ADMIN_ID = 479330946
 # Создаём экземпляры бота и диспетчера
 bot = Bot(token=TOKEN)
 
-python
 import asyncio
 import os
 import time
