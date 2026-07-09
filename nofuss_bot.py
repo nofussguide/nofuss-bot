@@ -867,9 +867,8 @@ def run_health_server():
     loop.run_forever()
 
 # ---------- ОБРАБОТЧИКИ ----------
-# УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК /start - перехватывает все вызовы до ConversationHandler
-async def universal_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Универсальный обработчик /start - работает всегда, независимо от состояния"""
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Главный обработчик команды /start"""
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
@@ -904,12 +903,6 @@ async def universal_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Возвращаем состояние для ConversationHandler
     return CATEGORY
-
-# Основной обработчик start_command (для ConversationHandler)
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start для ConversationHandler"""
-    # Просто вызываем универсальный обработчик
-    return await universal_start(update, context)
 
 async def delete_draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1746,7 +1739,7 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             if context.chat_data:
                 context.chat_data.clear()
-            return await universal_start(update, context)
+            return await start_command(update, context)
         return
     
     # Если пользователь ввёл текст вне диалога, предлагаем начать заново
@@ -2158,10 +2151,6 @@ def main():
     # Создаем приложение
     application = Application.builder().token(TOKEN).build()
     
-    # Сначала добавляем универсальный обработчик /start (перехватывает все вызовы)
-    # Он должен быть ПЕРВЫМ, чтобы перехватывать /start до ConversationHandler
-    application.add_handler(CommandHandler('start', universal_start))
-    
     # Регистрируем ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_command)],
@@ -2223,6 +2212,7 @@ def main():
         per_chat=False,
     )
     
+    # Добавляем обработчики
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler('news_now', news_now))
     application.add_handler(CommandHandler('admin', admin))
