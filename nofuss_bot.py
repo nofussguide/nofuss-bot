@@ -866,34 +866,46 @@ def run_health_server():
     loop.run_until_complete(start_web_server())
     loop.run_forever()
 
-# ---------- ОБРАБОТЧИКИ ----------
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Главный обработчик команды /start - всегда сбрасывает состояние и начинает заново"""
+# ---------- ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ДЛЯ /start (вне ConversationHandler) ----------
+async def global_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Глобальный обработчик /start, который работает ВНЕ ConversationHandler.
+    Он принудительно завершает любой диалог и начинает новый.
+    Это единственное решение проблемы с "зависанием" после перезапуска бота.
+    """
     user_id = update.message.from_user.id
-    user_name = update.message.from_user.first_name or ""
     
-    # КРИТИЧЕСКИ ВАЖНО: Полная очистка состояния ConversationHandler
-    # Это решает проблему с "зависанием" после перезапуска бота
-    conversation_key = f"{user_id}_{update.message.chat_id}"
-    if hasattr(context, '_conversation') and hasattr(context._conversation, 'conversations'):
-        # Принудительно завершаем любой активный диалог для этого пользователя
-        context._conversation.conversations.pop(conversation_key, None)
+    # 1. Принудительно завершаем ConversationHandler для этого пользователя
+    # Используем метод, который гарантированно сбрасывает состояние
+    try:
+        # Получаем текущий диалог из ConversationHandler
+        current_conversation = context._conversation
+        if current_conversation:
+            # Генерируем ключ диалога
+            conversation_key = f"{user_id}_{update.message.chat_id}"
+            # Удаляем диалог из хранилища
+            if hasattr(current_conversation, 'conversations'):
+                current_conversation.conversations.pop(conversation_key, None)
+                logger.info(f"Conversation for user {user_id} forcibly ended")
+    except Exception as e:
+        logger.warning(f"Error while ending conversation: {e}")
     
-    # Полная очистка данных пользователя
+    # 2. Полная очистка данных
     if context.user_data:
         context.user_data.clear()
     if context.chat_data:
         context.chat_data.clear()
     
-    # Удаляем черновик
+    # 3. Удаляем черновик
     delete_draft(user_id)
     
-    # Регистрируем пользователя
+    # 4. Регистрируем пользователя
+    user_name = update.message.from_user.first_name or ""
     cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
                    (user_id, update.message.from_user.username or '', user_name))
     db.commit()
     
-    # Отправляем приветствие
+    # 5. Отправляем приветствие
     await update.message.reply_text(
         f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
         f"📱 {get_text(user_id, 'choose_category')}",
@@ -901,15 +913,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=remove_keyboard()
     )
     
-    # Отправляем выбор категории
+    # 6. Отправляем выбор категории
     await update.message.reply_text(
         f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
         f"{get_text(user_id, 'choose_category')}",
         reply_markup=categories_inline(user_id)
     )
     
-    # Возвращаем состояние для ConversationHandler
+    # 7. Возвращаем состояние CATEGORY для ConversationHandler
     return CATEGORY
+
+# ---------- ОБРАБОТЧИКИ ----------
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запасной обработчик /start для ConversationHandler"""
+    # Просто вызываем глобальный обработчик
+    return await global_start_handler(update, context)
 
 async def delete_draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1738,15 +1756,10 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик для всего остального текста"""
     user_id = update.message.from_user.id
     
-    # Если это команда /start, передаём её в start_command
+    # Если это команда /start, передаём её в global_start_handler
     if update.message.text and update.message.text.startswith('/'):
         if update.message.text == '/start':
-            # Полная очистка перед запуском
-            clear_user_data(context)
-            context.user_data.clear()
-            if context.chat_data:
-                context.chat_data.clear()
-            return await start_command(update, context)
+            return await global_start_handler(update, context)
         return
     
     # Если пользователь ввёл текст вне диалога, предлагаем начать заново
@@ -2219,8 +2232,14 @@ def main():
         per_chat=False,
     )
     
-    # Добавляем обработчики
-    application.add_handler(conv_handler)
+    # ВАЖНО: Добавляем глобальный обработчик /start ПЕРЕД ConversationHandler
+    # Он будет перехватывать все вызовы /start и принудительно сбрасывать состояние
+    application.add_handler(CommandHandler('start', global_start_handler), group=0)
+    
+    # Добавляем ConversationHandler
+    application.add_handler(conv_handler, group=1)
+    
+    # Добавляем остальные обработчики
     application.add_handler(CommandHandler('news_now', news_now))
     application.add_handler(CommandHandler('admin', admin))
     application.add_handler(CommandHandler('export', export_data))
