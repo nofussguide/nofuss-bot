@@ -868,11 +868,18 @@ def run_health_server():
 
 # ---------- ОБРАБОТЧИКИ ----------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Главный обработчик команды /start"""
+    """Главный обработчик команды /start - всегда сбрасывает состояние и начинает заново"""
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name or ""
     
-    # ПОЛНАЯ ОЧИСТКА ВСЕХ ДАННЫХ
+    # КРИТИЧЕСКИ ВАЖНО: Полная очистка состояния ConversationHandler
+    # Это решает проблему с "зависанием" после перезапуска бота
+    conversation_key = f"{user_id}_{update.message.chat_id}"
+    if hasattr(context, '_conversation') and hasattr(context._conversation, 'conversations'):
+        # Принудительно завершаем любой активный диалог для этого пользователя
+        context._conversation.conversations.pop(conversation_key, None)
+    
+    # Полная очистка данных пользователя
     if context.user_data:
         context.user_data.clear()
     if context.chat_data:
