@@ -26,7 +26,7 @@ from deep_translator import GoogleTranslator
 
 # Импорты для Telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -106,9 +106,6 @@ BEGIN
 END;
 """)
 db.commit()
-
-# ---------- СОСТОЯНИЯ ----------
-CATEGORY, BUDGET, PRIORITY, USED, MODELS, CONTACT, CONFIRM, EDIT_SELECT, EDITING_POST, AFTER_SUBMIT, FEEDBACK, FEEDBACK_TEXT, ADMIN_CHAT = range(13)
 
 # ---------- МУЛЬТИЯЗЫЧНОСТЬ ----------
 TRANSLATIONS = {
@@ -530,11 +527,8 @@ def delete_draft(user_id):
         logger.error(f"Error deleting draft for user {user_id}: {e}")
 
 def clear_user_data(context: ContextTypes.DEFAULT_TYPE):
-    """Безопасная очистка данных пользователя"""
-    keys_to_remove = ['category', 'budget', 'priority', 'used', 'models', '_last_step', 
-                     'editing_index', 'chat_user_id', 'chat_request_id', 'feedback_request_id', 'editing_type']
-    for key in keys_to_remove:
-        context.user_data.pop(key, None)
+    """Полная очистка данных пользователя"""
+    context.user_data.clear()
 
 # ---------- ИНЛАЙН-КЛАВИАТУРЫ ----------
 def categories_inline(user_id):
@@ -652,7 +646,6 @@ def theme_select_inline(user_id):
     return InlineKeyboardMarkup(buttons)
 
 def feedback_inline(request_id, user_id):
-    """Клавиатура для отзыва с правильным форматом callback_data"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⭐ 1", callback_data=f"fb_rating_{request_id}_1")],
         [InlineKeyboardButton("⭐⭐ 2", callback_data=f"fb_rating_{request_id}_2")],
@@ -866,44 +859,24 @@ def run_health_server():
     loop.run_until_complete(start_web_server())
     loop.run_forever()
 
-# ---------- ФУНКЦИЯ ДЛЯ СБРОСА ДИАЛОГА ----------
-def reset_conversation(context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int):
-    """Принудительный сброс диалога для пользователя"""
-    try:
-        conversation_key = f"{user_id}_{chat_id}"
-        if hasattr(context, '_conversation') and context._conversation:
-            if hasattr(context._conversation, 'conversations'):
-                context._conversation.conversations.pop(conversation_key, None)
-                logger.info(f"Conversation reset for user {user_id}")
-                return True
-    except Exception as e:
-        logger.warning(f"Error resetting conversation: {e}")
-    return False
-
-# ---------- ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ДЛЯ /start ----------
-async def global_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Глобальный обработчик /start - принудительно сбрасывает диалог"""
+# ---------- ОСНОВНЫЕ ОБРАБОТЧИКИ ----------
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start - полный сброс и начало"""
     user_id = update.message.from_user.id
-    chat_id = update.message.chat_id
+    user_name = update.message.from_user.first_name or ""
     
-    # Сбрасываем диалог
-    reset_conversation(context, user_id, chat_id)
-    
-    # Очищаем данные
-    if context.user_data:
-        context.user_data.clear()
-    if context.chat_data:
-        context.chat_data.clear()
-    
+    # Полная очистка
+    clear_user_data(context)
     delete_draft(user_id)
     
     # Регистрируем пользователя
-    user_name = update.message.from_user.first_name or ""
     cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
                    (user_id, update.message.from_user.username or '', user_name))
     db.commit()
     
-    # Отправляем приветствие
+    # Устанавливаем состояние
+    context.user_data['step'] = 'category'
+    
     await update.message.reply_text(
         f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
         f"📱 {get_text(user_id, 'choose_category')}",
@@ -916,84 +889,67 @@ async def global_start_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         f"{get_text(user_id, 'choose_category')}",
         reply_markup=categories_inline(user_id)
     )
-    
-    return CATEGORY
 
-# ---------- ОБРАБОТЧИКИ ----------
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запасной обработчик /start для ConversationHandler"""
-    return await global_start_handler(update, context)
-
-async def delete_draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Универсальный обработчик всех callback_query"""
     query = update.callback_query
     await query.answer()
+    
     user_id = query.from_user.id
+    data = query.data
+    chat_id = query.message.chat_id
     
-    delete_draft(user_id)
-    clear_user_data(context)
+    # Проверяем, есть ли активный шаг
+    step = context.user_data.get('step', '')
     
-    await query.edit_message_text("✅ Черновик удалён. Начинаем заново.")
+    logger.info(f"Callback: user={user_id}, step={step}, data={data}")
     
-    user_name = query.from_user.first_name or ""
-    await query.message.reply_text(
-        f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
-        f"📱 {get_text(user_id, 'choose_category')}",
-        parse_mode=None
-    )
+    # ---------- ОБРАБОТКА НАВИГАЦИИ ----------
+    if data == "home":
+        clear_user_data(context)
+        delete_draft(user_id)
+        context.user_data['step'] = 'category'
+        await query.edit_message_text(
+            f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
+            reply_markup=categories_inline(user_id)
+        )
+        return
     
-    await query.message.reply_text(
-        f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
-        f"{get_text(user_id, 'choose_category')}",
-        reply_markup=categories_inline(user_id)
-    )
-    return CATEGORY
-
-async def continue_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    draft = load_draft(user_id)
-    if not draft:
-        await query.edit_message_text("❌ Черновик не найден")
-        return CATEGORY
-    
-    for key, value in draft.items():
-        if key != '_last_step':
-            context.user_data[key] = value
-    
-    await query.edit_message_text("📝 Продолжаем оформление заявки...")
-    
-    last_step = draft.get('_last_step', 'category')
-    
-    if last_step == 'category':
-        await query.message.reply_text(
+    if data == "back_to_categories":
+        context.user_data['step'] = 'category'
+        await query.edit_message_text(
             f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
             f"{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
         )
-        return CATEGORY
-    elif last_step == 'budget':
+        return
+    
+    if data == "back_to_budget":
+        context.user_data['step'] = 'budget'
         category = context.user_data.get('category', '📱 Смартфоны')
-        await query.message.reply_text(
+        await query.edit_message_text(
             f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
             f"✅ Выбрано: {category}\n\n"
             f"{get_text(user_id, 'choose_budget')}",
             reply_markup=budget_inline(category, user_id)
         )
-        return BUDGET
-    elif last_step == 'priority':
+        return
+    
+    if data == "back_to_priority":
+        context.user_data['step'] = 'priority'
         category = context.user_data.get('category', '📱 Смартфоны')
-        await query.message.reply_text(
+        await query.edit_message_text(
             f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
             f"✅ Категория: {category}\n"
             f"💰 Бюджет: {context.user_data.get('budget')}\n\n"
             f"{get_text(user_id, 'choose_priority')}",
             reply_markup=priority_inline(category, user_id)
         )
-        return PRIORITY
-    elif last_step == 'used':
-        await query.message.reply_text(
+        return
+    
+    if data == "back_to_used":
+        context.user_data['step'] = 'used'
+        await query.edit_message_text(
             f"{get_progress_bar(4)} {get_step_text(4)}\n\n"
             f"✅ Категория: {context.user_data.get('category')}\n"
             f"💰 Бюджет: {context.user_data.get('budget')}\n"
@@ -1001,161 +957,345 @@ async def continue_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{get_text(user_id, 'choose_used')}",
             reply_markup=used_inline(user_id)
         )
-        return USED
-    elif last_step == 'models_choice':
-        await query.message.reply_text(
-            f"{get_progress_bar(5)} {get_step_text(5)}\n\n"
-            f"✅ Категория: {context.user_data.get('category')}\n"
-            f"💰 Бюджет: {context.user_data.get('budget')}\n"
-            f"🎯 Приоритет: {context.user_data.get('priority')}\n"
-            f"♻️ Б/У: {context.user_data.get('used')}\n\n"
-            f"{get_text(user_id, 'choose_models')}",
-            reply_markup=models_inline(user_id)
-        )
-        return MODELS
-    elif last_step == 'confirm':
-        await show_confirm(query, context, user_id)
-        return CONFIRM
-
-async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    chat_id = query.message.chat_id
+        return
     
-    # Проверяем, что диалог активен, если нет - сбрасываем
-    try:
-        category = CATEGORIES[int(query.data.split("_")[1])]
-    except (IndexError, ValueError):
-        # Если не можем получить категорию - сбрасываем диалог
-        reset_conversation(context, user_id, chat_id)
-        await query.edit_message_text("🔄 Сессия обновлена. Начните заново с /start")
-        return ConversationHandler.END
+    # ---------- ВЫБОР КАТЕГОРИИ ----------
+    if data.startswith("cat_") and step in ['category', '']:
+        try:
+            category = CATEGORIES[int(data.split("_")[1])]
+            context.user_data['category'] = category
+            context.user_data['step'] = 'budget'
+            save_draft(user_id, context.user_data)
+            
+            await query.edit_message_text(
+                f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
+                f"✅ Выбрано: {category}\n\n"
+                f"{get_text(user_id, 'choose_budget')}",
+                reply_markup=budget_inline(category, user_id)
+            )
+        except Exception as e:
+            logger.error(f"Error in category selection: {e}")
+            clear_user_data(context)
+            context.user_data['step'] = 'category'
+            await query.edit_message_text(
+                "🔄 Произошла ошибка. Начните заново с /start",
+                reply_markup=categories_inline(user_id)
+            )
+        return
     
-    context.user_data['category'] = category
-    context.user_data['_last_step'] = 'budget'
-    save_draft(user_id, context.user_data)
+    # ---------- ВЫБОР БЮДЖЕТА ----------
+    if data.startswith("budget_") and step == 'budget':
+        try:
+            category = context.user_data.get('category', '📱 Смартфоны')
+            budget = BUDGETS.get(category, [])[int(data.split("_")[1])]
+            context.user_data['budget'] = budget
+            
+            if category in NO_PRIORITY_CATEGORIES:
+                context.user_data['priority'] = "Не требуется"
+                context.user_data['used'] = "Не требуется"
+                context.user_data['models'] = "Не указано"
+                context.user_data['step'] = 'confirm'
+                save_draft(user_id, context.user_data)
+                await show_confirm(query, context, user_id)
+                return
+            
+            context.user_data['step'] = 'priority'
+            save_draft(user_id, context.user_data)
+            
+            await query.edit_message_text(
+                f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
+                f"✅ Категория: {category}\n"
+                f"💰 Бюджет: {budget}\n\n"
+                f"{get_text(user_id, 'choose_priority')}",
+                reply_markup=priority_inline(category, user_id)
+            )
+        except Exception as e:
+            logger.error(f"Error in budget selection: {e}")
+            clear_user_data(context)
+            context.user_data['step'] = 'category'
+            await query.edit_message_text(
+                "🔄 Произошла ошибка. Начните заново с /start",
+                reply_markup=categories_inline(user_id)
+            )
+        return
     
-    await query.edit_message_text(
-        f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
-        f"✅ Выбрано: {category}\n\n"
-        f"{get_text(user_id, 'choose_budget')}",
-        reply_markup=budget_inline(category, user_id)
-    )
-    return BUDGET
-
-async def handle_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    chat_id = query.message.chat_id
+    # ---------- ВЫБОР ПРИОРИТЕТА ----------
+    if data.startswith("priority_") and step == 'priority':
+        try:
+            category = context.user_data.get('category', '📱 Смартфоны')
+            priority = PRIORITIES.get(category, [])[int(data.split("_")[1])]
+            context.user_data['priority'] = priority
+            context.user_data['step'] = 'used'
+            save_draft(user_id, context.user_data)
+            
+            await query.edit_message_text(
+                f"{get_progress_bar(4)} {get_step_text(4)}\n\n"
+                f"✅ Категория: {category}\n"
+                f"💰 Бюджет: {context.user_data.get('budget')}\n"
+                f"🎯 Приоритет: {priority}\n\n"
+                f"{get_text(user_id, 'choose_used')}",
+                reply_markup=used_inline(user_id)
+            )
+        except Exception as e:
+            logger.error(f"Error in priority selection: {e}")
+            clear_user_data(context)
+            context.user_data['step'] = 'category'
+            await query.edit_message_text(
+                "🔄 Произошла ошибка. Начните заново с /start",
+                reply_markup=categories_inline(user_id)
+            )
+        return
     
-    try:
-        category = context.user_data.get('category', '📱 Смартфоны')
-        budget = BUDGETS.get(category, [])[int(query.data.split("_")[1])]
-    except (IndexError, ValueError, KeyError):
-        reset_conversation(context, user_id, chat_id)
-        await query.edit_message_text("🔄 Сессия обновлена. Начните заново с /start")
-        return ConversationHandler.END
+    # ---------- ВЫБОР Б/У ----------
+    if data.startswith("used_") and step == 'used':
+        try:
+            used_map = {'used_yes': 'Да', 'used_no': 'Нет', 'used_any': 'Не принципиально'}
+            used = used_map.get(data, 'Не указано')
+            context.user_data['used'] = used
+            context.user_data['step'] = 'models_choice'
+            save_draft(user_id, context.user_data)
+            
+            await query.edit_message_text(
+                f"{get_progress_bar(5)} {get_step_text(5)}\n\n"
+                f"✅ Категория: {context.user_data.get('category')}\n"
+                f"💰 Бюджет: {context.user_data.get('budget')}\n"
+                f"🎯 Приоритет: {context.user_data.get('priority')}\n"
+                f"♻️ Б/У: {used}\n\n"
+                f"{get_text(user_id, 'choose_models')}",
+                reply_markup=models_inline(user_id)
+            )
+        except Exception as e:
+            logger.error(f"Error in used selection: {e}")
+            clear_user_data(context)
+            context.user_data['step'] = 'category'
+            await query.edit_message_text(
+                "🔄 Произошла ошибка. Начните заново с /start",
+                reply_markup=categories_inline(user_id)
+            )
+        return
     
-    context.user_data['budget'] = budget
-    context.user_data['_last_step'] = 'priority'
-    save_draft(user_id, context.user_data)
-    
-    if category in NO_PRIORITY_CATEGORIES:
-        context.user_data['priority'] = "Не требуется"
-        context.user_data['used'] = "Не требуется"
-        context.user_data['models'] = "Не указано"
-        context.user_data['_last_step'] = 'confirm'
-        save_draft(user_id, context.user_data)
-        await show_confirm(query, context, user_id)
-        return CONFIRM
-    
-    await query.edit_message_text(
-        f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
-        f"✅ Категория: {category}\n"
-        f"💰 Бюджет: {budget}\n\n"
-        f"{get_text(user_id, 'choose_priority')}",
-        reply_markup=priority_inline(category, user_id)
-    )
-    return PRIORITY
-
-async def handle_priority(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    chat_id = query.message.chat_id
-    
-    try:
-        category = context.user_data.get('category', '📱 Смартфоны')
-        priority = PRIORITIES.get(category, [])[int(query.data.split("_")[1])]
-    except (IndexError, ValueError, KeyError):
-        reset_conversation(context, user_id, chat_id)
-        await query.edit_message_text("🔄 Сессия обновлена. Начните заново с /start")
-        return ConversationHandler.END
-    
-    context.user_data['priority'] = priority
-    context.user_data['_last_step'] = 'used'
-    save_draft(user_id, context.user_data)
-    
-    await query.edit_message_text(
-        f"{get_progress_bar(4)} {get_step_text(4)}\n\n"
-        f"✅ Категория: {category}\n"
-        f"💰 Бюджет: {context.user_data.get('budget')}\n"
-        f"🎯 Приоритет: {priority}\n\n"
-        f"{get_text(user_id, 'choose_used')}",
-        reply_markup=used_inline(user_id)
-    )
-    return USED
-
-async def handle_used(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    used_map = {'used_yes': 'Да', 'used_no': 'Нет', 'used_any': 'Не принципиально'}
-    used = used_map.get(query.data, 'Не указано')
-    context.user_data['used'] = used
-    context.user_data['_last_step'] = 'models_choice'
-    save_draft(user_id, context.user_data)
-    
-    await query.edit_message_text(
-        f"{get_progress_bar(5)} {get_step_text(5)}\n\n"
-        f"✅ Категория: {context.user_data.get('category')}\n"
-        f"💰 Бюджет: {context.user_data.get('budget')}\n"
-        f"🎯 Приоритет: {context.user_data.get('priority')}\n"
-        f"♻️ Б/У: {used}\n\n"
-        f"{get_text(user_id, 'choose_models')}",
-        reply_markup=models_inline(user_id)
-    )
-    return MODELS
-
-async def handle_models(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    if query.data == "models_specify":
+    # ---------- ВЫБОР МОДЕЛЕЙ ----------
+    if data == "models_specify" and step == 'models_choice':
         await query.edit_message_text(
             f"{get_progress_bar(5)} {get_step_text(5)}\n\n"
             "📝 Напишите понравившиеся модели через запятую.\n\n"
             "Например: iPhone 17, Galaxy S27, Xiaomi 15"
         )
-        return MODELS
-    else:
+        context.user_data['step'] = 'models_text'
+        return
+    
+    if data == "models_skip" and step == 'models_choice':
         context.user_data['models'] = "Не указано"
-        context.user_data['_last_step'] = 'confirm'
+        context.user_data['step'] = 'confirm'
         save_draft(user_id, context.user_data)
         await show_confirm(query, context, user_id)
-        return CONFIRM
-
-async def models_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    context.user_data['models'] = update.message.text
-    context.user_data['_last_step'] = 'confirm'
-    save_draft(user_id, context.user_data)
-    await show_confirm(update, context, user_id)
-    return CONFIRM
+        return
+    
+    # ---------- ПОДТВЕРЖДЕНИЕ ----------
+    if data == "confirm_yes" and step == 'confirm':
+        can_send, wait_time = can_send_request(user_id)
+        if not can_send:
+            await query.edit_message_text(
+                get_text(user_id, 'wait_spam', seconds=wait_time)
+            )
+            return
+        
+        delete_draft(user_id)
+        context.user_data['step'] = 'contact'
+        await query.message.delete()
+        await query.message.reply_text(
+            get_text(user_id, 'contact_request'),
+            reply_markup=contact_keyboard()
+        )
+        return
+    
+    if data == "confirm_edit" and step == 'confirm':
+        await query.edit_message_text(
+            "✏️ Выберите, что хотите изменить:",
+            reply_markup=edit_select_inline(user_id)
+        )
+        context.user_data['step'] = 'edit_select'
+        return
+    
+    # ---------- РЕДАКТИРОВАНИЕ ----------
+    if data.startswith("edit_") and step == 'edit_select':
+        action = data
+        
+        if action == "edit_category":
+            context.user_data['step'] = 'category'
+            await query.edit_message_text(
+                get_text(user_id, 'choose_category'),
+                reply_markup=categories_inline(user_id)
+            )
+            return
+        
+        elif action == "edit_budget":
+            context.user_data['step'] = 'budget'
+            category = context.user_data.get('category', '📱 Смартфоны')
+            await query.edit_message_text(
+                f"💰 {get_text(user_id, 'choose_budget')}",
+                reply_markup=budget_inline(category, user_id)
+            )
+            return
+        
+        elif action == "edit_priority":
+            category = context.user_data.get('category', '📱 Смартфоны')
+            if category in NO_PRIORITY_CATEGORIES:
+                await query.answer("ℹ️ Для этой категории приоритет не требуется")
+                return
+            context.user_data['step'] = 'priority'
+            await query.edit_message_text(
+                get_text(user_id, 'choose_priority'),
+                reply_markup=priority_inline(category, user_id)
+            )
+            return
+        
+        elif action == "edit_used":
+            context.user_data['step'] = 'used'
+            await query.edit_message_text(
+                get_text(user_id, 'choose_used'),
+                reply_markup=used_inline(user_id)
+            )
+            return
+        
+        elif action == "edit_models":
+            context.user_data['step'] = 'models_choice'
+            await query.edit_message_text(
+                "📝 Напишите модели через запятую\n\n"
+                "Например: iPhone 17, Galaxy S27",
+                reply_markup=models_inline(user_id)
+            )
+            return
+        
+        elif action == "home":
+            clear_user_data(context)
+            delete_draft(user_id)
+            context.user_data['step'] = 'category'
+            await query.edit_message_text(
+                f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
+                reply_markup=categories_inline(user_id)
+            )
+            return
+    
+    # ---------- ПОСЛЕ ОТПРАВКИ ----------
+    if data == "new_request":
+        clear_user_data(context)
+        delete_draft(user_id)
+        context.user_data['step'] = 'category'
+        await query.edit_message_text(
+            f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
+            f"{get_text(user_id, 'choose_category')}",
+            reply_markup=categories_inline(user_id)
+        )
+        return
+    
+    if data == "my_requests":
+        requests = cursor.execute(
+            """SELECT id, request_number, category, status, created_at, budget, priority, used, models
+            FROM requests WHERE user_id=? 
+            ORDER BY created_at DESC LIMIT 10""",
+            (user_id,)
+        ).fetchall()
+        
+        if not requests:
+            await query.edit_message_text(
+                get_text(user_id, 'no_requests'),
+                reply_markup=after_submit_inline(user_id)
+            )
+            return
+        
+        text = f"{get_text(user_id, 'my_requests_title')}\n\n"
+        for req in requests:
+            status = get_status_emoji(req[3])
+            date = req[4][:10] if req[4] else 'Дата неизвестна'
+            text += f"#{req[1]} {status} {req[2]}\n"
+            text += f"   📅 {date} | {get_status_text(req[3], user_id)}\n"
+            text += f"   💰 {req[5]}\n"
+            if req[6] and req[6] != "Не требуется":
+                text += f"   🎯 {req[6]}\n"
+            text += "\n"
+        
+        text += f"Нажмите '{get_text(user_id, 'new_request')}' чтобы создать новую"
+        
+        await query.edit_message_text(
+            text,
+            parse_mode=None,
+            reply_markup=after_submit_inline(user_id)
+        )
+        return
+    
+    if data == "contact_admin":
+        await query.edit_message_text(
+            get_text(user_id, 'contact_admin_text'),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📞 Написать @goojifeed", url="https://t.me/goojifeed")],
+                [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
+            ])
+        )
+        return
+    
+    # ---------- НАСТРОЙКИ ----------
+    if data == "settings_lang":
+        await query.edit_message_text(
+            get_text(user_id, 'settings_lang'),
+            parse_mode=None,
+            reply_markup=language_select_inline(user_id)
+        )
+        return
+    
+    if data == "settings_theme":
+        await query.edit_message_text(
+            get_text(user_id, 'settings_theme'),
+            parse_mode=None,
+            reply_markup=theme_select_inline(user_id)
+        )
+        return
+    
+    if data == "share_bot":
+        await query.edit_message_text(
+            get_text(user_id, 'share_text'),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📤 Поделиться", switch_inline_query="NoFuss Guide - бот для подбора техники!")],
+                [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
+            ])
+        )
+        return
+    
+    if data == "settings_back":
+        await query.edit_message_text(
+            get_text(user_id, 'settings_title'),
+            parse_mode=None,
+            reply_markup=settings_inline(user_id)
+        )
+        return
+    
+    if data.startswith("lang_"):
+        lang = data.split("_")[1]
+        update_user_lang(user_id, lang)
+        await query.edit_message_text(
+            get_text(user_id, 'language_changed', lang=LANGUAGES.get(lang, lang)),
+            reply_markup=settings_inline(user_id)
+        )
+        return
+    
+    if data.startswith("theme_"):
+        theme = data.split("_")[1]
+        update_user_theme(user_id, theme)
+        await query.edit_message_text(
+            get_text(user_id, 'theme_changed', theme=THEMES.get(theme, theme)),
+            reply_markup=settings_inline(user_id)
+        )
+        return
+    
+    # ---------- ЕСЛИ НИ ОДИН ОБРАБОТЧИК НЕ СРАБОТАЛ ----------
+    # Пытаемся восстановиться - сбрасываем состояние
+    logger.warning(f"Unhandled callback: {data} for user {user_id}")
+    clear_user_data(context)
+    context.user_data['step'] = 'category'
+    await query.edit_message_text(
+        "🔄 Сессия обновлена. Начните заново с /start",
+        reply_markup=categories_inline(user_id)
+    )
 
 async def show_confirm(update_or_query, context, user_id):
     data = context.user_data
@@ -1172,164 +1312,13 @@ async def show_confirm(update_or_query, context, user_id):
         "✏️ Хотите изменить? Нажмите 'Редактировать данные'"
     )
     
+    context.user_data['step'] = 'confirm'
+    save_draft(user_id, context.user_data)
+    
     if hasattr(update_or_query, 'edit_message_text'):
         await update_or_query.edit_message_text(text, reply_markup=confirm_inline(user_id))
     else:
         await update_or_query.message.reply_text(text, reply_markup=confirm_inline(user_id))
-
-async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    chat_id = query.message.chat_id
-    
-    if query.data == "confirm_yes":
-        can_send, wait_time = can_send_request(user_id)
-        if not can_send:
-            await query.edit_message_text(
-                get_text(user_id, 'wait_spam', seconds=wait_time)
-            )
-            return CONFIRM
-        
-        delete_draft(user_id)
-        await query.message.delete()
-        await query.message.reply_text(
-            get_text(user_id, 'contact_request'),
-            reply_markup=contact_keyboard()
-        )
-        return CONTACT
-    
-    elif query.data == "confirm_edit":
-        await query.edit_message_text(
-            "✏️ Выберите, что хотите изменить:",
-            reply_markup=edit_select_inline(user_id)
-        )
-        return EDIT_SELECT
-    
-    elif query.data == "home":
-        delete_draft(user_id)
-        clear_user_data(context)
-        await query.edit_message_text(
-            f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
-            reply_markup=categories_inline(user_id)
-        )
-        return CATEGORY
-
-async def handle_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    action = query.data
-    
-    if action == "edit_category":
-        await query.edit_message_text(
-            get_text(user_id, 'choose_category'),
-            reply_markup=categories_inline(user_id)
-        )
-        return CATEGORY
-    
-    elif action == "edit_budget":
-        category = context.user_data.get('category', '📱 Смартфоны')
-        await query.edit_message_text(
-            f"💰 {get_text(user_id, 'choose_budget')}",
-            reply_markup=budget_inline(category, user_id)
-        )
-        return BUDGET
-    
-    elif action == "edit_priority":
-        category = context.user_data.get('category', '📱 Смартфоны')
-        if category in NO_PRIORITY_CATEGORIES:
-            await query.answer("ℹ️ Для этой категории приоритет не требуется")
-            return EDIT_SELECT
-        await query.edit_message_text(
-            get_text(user_id, 'choose_priority'),
-            reply_markup=priority_inline(category, user_id)
-        )
-        return PRIORITY
-    
-    elif action == "edit_used":
-        await query.edit_message_text(
-            get_text(user_id, 'choose_used'),
-            reply_markup=used_inline(user_id)
-        )
-        return USED
-    
-    elif action == "edit_models":
-        await query.edit_message_text(
-            "📝 Напишите модели через запятую\n\n"
-            "Например: iPhone 17, Galaxy S27",
-            reply_markup=models_inline(user_id)
-        )
-        return MODELS
-    
-    elif action == "home":
-        delete_draft(user_id)
-        clear_user_data(context)
-        await query.edit_message_text(
-            f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
-            reply_markup=categories_inline(user_id)
-        )
-        return CATEGORY
-
-async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    chat_id = query.message.chat_id
-    
-    action = query.data
-    
-    if action == "home":
-        delete_draft(user_id)
-        clear_user_data(context)
-        # Сбрасываем диалог при возврате на главную
-        reset_conversation(context, user_id, chat_id)
-        await query.edit_message_text(
-            f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
-            reply_markup=categories_inline(user_id)
-        )
-        return CATEGORY
-    
-    elif action == "back_to_categories":
-        await query.edit_message_text(
-            f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
-            f"{get_text(user_id, 'choose_category')}",
-            reply_markup=categories_inline(user_id)
-        )
-        return CATEGORY
-    
-    elif action == "back_to_budget":
-        category = context.user_data.get('category', '📱 Смартфоны')
-        await query.edit_message_text(
-            f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
-            f"✅ Выбрано: {category}\n\n"
-            f"{get_text(user_id, 'choose_budget')}",
-            reply_markup=budget_inline(category, user_id)
-        )
-        return BUDGET
-    
-    elif action == "back_to_priority":
-        category = context.user_data.get('category', '📱 Смартфоны')
-        await query.edit_message_text(
-            f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
-            f"✅ Категория: {category}\n"
-            f"💰 Бюджет: {context.user_data.get('budget')}\n\n"
-            f"{get_text(user_id, 'choose_priority')}",
-            reply_markup=priority_inline(category, user_id)
-        )
-        return PRIORITY
-    
-    elif action == "back_to_used":
-        await query.edit_message_text(
-            f"{get_progress_bar(4)} {get_step_text(4)}\n\n"
-            f"✅ Категория: {context.user_data.get('category')}\n"
-            f"💰 Бюджет: {context.user_data.get('budget')}\n"
-            f"🎯 Приоритет: {context.user_data.get('priority')}\n\n"
-            f"{get_text(user_id, 'choose_used')}",
-            reply_markup=used_inline(user_id)
-        )
-        return USED
 
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -1339,7 +1328,7 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚠️ Пожалуйста, используйте кнопку '📞 Поделиться контактом'",
             reply_markup=contact_keyboard()
         )
-        return CONTACT
+        return
     
     data = context.user_data
     
@@ -1398,84 +1387,48 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     await update.get_bot().send_message(ADMIN_ID, admin_text, parse_mode=None, reply_markup=keyboard)
-    
-    # После отправки заявки сбрасываем диалог, чтобы при следующей заявке всё работало
-    reset_conversation(context, user_id, update.message.chat_id)
-    
-    return AFTER_SUBMIT
 
-async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    chat_id = query.message.chat_id
+async def models_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
     
-    action = query.data
+    if context.user_data.get('step') != 'models_text':
+        return
     
-    if action == "new_request":
-        clear_user_data(context)
-        # КРИТИЧЕСКИ ВАЖНО: Сбрасываем диалог перед созданием новой заявки
-        reset_conversation(context, user_id, chat_id)
-        await query.edit_message_text(
-            f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
-            f"{get_text(user_id, 'choose_category')}",
-            reply_markup=categories_inline(user_id)
-        )
-        return CATEGORY
+    context.user_data['models'] = update.message.text
+    await show_confirm(update, context, user_id)
+
+async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик всего остального"""
+    user_id = update.message.from_user.id
     
-    elif action == "my_requests":
-        requests = cursor.execute(
-            """SELECT id, request_number, category, status, created_at, budget, priority, used, models
-            FROM requests WHERE user_id=? 
-            ORDER BY created_at DESC LIMIT 10""",
-            (user_id,)
-        ).fetchall()
-        
-        if not requests:
-            await query.edit_message_text(
-                get_text(user_id, 'no_requests'),
-                reply_markup=after_submit_inline(user_id)
-            )
-            return AFTER_SUBMIT
-        
-        text = f"{get_text(user_id, 'my_requests_title')}\n\n"
-        for req in requests:
-            status = get_status_emoji(req[3])
-            date = req[4][:10] if req[4] else 'Дата неизвестна'
-            text += f"#{req[1]} {status} {req[2]}\n"
-            text += f"   📅 {date} | {get_status_text(req[3], user_id)}\n"
-            text += f"   💰 {req[5]}\n"
-            if req[6] and req[6] != "Не требуется":
-                text += f"   🎯 {req[6]}\n"
-            text += "\n"
-        
-        text += f"Нажмите '{get_text(user_id, 'new_request')}' чтобы создать новую"
-        
-        await query.edit_message_text(
-            text,
-            parse_mode=None,
-            reply_markup=after_submit_inline(user_id)
-        )
-        return AFTER_SUBMIT
+    if update.message.text and update.message.text.startswith('/'):
+        return
     
-    elif action == "contact_admin":
-        await query.edit_message_text(
-            get_text(user_id, 'contact_admin_text'),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📞 Написать @goojifeed", url="https://t.me/goojifeed")],
-                [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
-            ])
-        )
-        return AFTER_SUBMIT
+    step = context.user_data.get('step', '')
     
-    elif action == "home":
-        clear_user_data(context)
-        reset_conversation(context, user_id, chat_id)
-        await query.edit_message_text(
-            f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
-            reply_markup=categories_inline(user_id)
-        )
-        return CATEGORY
+    if step == 'models_text':
+        await models_text_handler(update, context)
+        return
+    
+    await update.message.reply_text(
+        "ℹ️ Используйте кнопки для взаимодействия с ботом.\n"
+        "Чтобы начать заново, напишите /start",
+        reply_markup=remove_keyboard()
+    )
+
+# ---------- АДМИНСКИЕ ОБРАБОТЧИКИ ----------
+async def commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    text = get_text(user_id, 'commands_list')
+    await update.message.reply_text(text, parse_mode=None, reply_markup=remove_keyboard())
+
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    await update.message.reply_text(get_text(user_id, 'about_text'), parse_mode=None, reply_markup=remove_keyboard())
+
+async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    await update.message.reply_text(get_text(user_id, 'faq_text'), parse_mode=None, reply_markup=remove_keyboard())
 
 async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -1526,162 +1479,88 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=settings_inline(user_id)
     )
 
-async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    if query.data == "settings_lang":
-        await query.edit_message_text(
-            get_text(user_id, 'settings_lang'),
-            parse_mode=None,
-            reply_markup=language_select_inline(user_id)
-        )
-        return
-    
-    elif query.data == "settings_theme":
-        await query.edit_message_text(
-            get_text(user_id, 'settings_theme'),
-            parse_mode=None,
-            reply_markup=theme_select_inline(user_id)
-        )
-        return
-    
-    elif query.data == "share_bot":
-        await query.edit_message_text(
-            get_text(user_id, 'share_text'),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📤 Поделиться", switch_inline_query="NoFuss Guide - бот для подбора техники!")],
-                [InlineKeyboardButton(get_text(user_id, 'home'), callback_data="home")]
-            ])
-        )
-        return
-    
-    elif query.data == "settings_back":
-        await query.edit_message_text(
-            get_text(user_id, 'settings_title'),
-            parse_mode=None,
-            reply_markup=settings_inline(user_id)
-        )
-        return
-    
-    elif query.data == "home":
-        delete_draft(user_id)
-        clear_user_data(context)
-        await query.edit_message_text(
-            f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
-            reply_markup=categories_inline(user_id)
-        )
-        return CATEGORY
-
-async def language_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    lang = query.data.split("_")[1]
-    update_user_lang(user_id, lang)
-    
-    await query.edit_message_text(
-        get_text(user_id, 'language_changed', lang=LANGUAGES.get(lang, lang)),
-        reply_markup=settings_inline(user_id)
-    )
-
-async def theme_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    theme = query.data.split("_")[1]
-    update_user_theme(user_id, theme)
-    
-    await query.edit_message_text(
-        get_text(user_id, 'theme_changed', theme=THEMES.get(theme, theme)),
-        reply_markup=settings_inline(user_id)
-    )
-
-async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик кнопок отзыва"""
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    try:
-        data = query.data
-        logger.info(f"Feedback callback data: {data}")
-        
-        parts = data.split("_")
-        
-        if len(parts) < 3:
-            await query.edit_message_text("❌ Ошибка в данных отзыва")
-            return ConversationHandler.END
-        
-        action = parts[1]
-        request_id = int(parts[2])
-        
-        if action == "skip":
-            await query.edit_message_text(get_text(user_id, 'feedback_skip'))
-            return ConversationHandler.END
-        
-        elif action == "text":
-            await query.edit_message_text(get_text(user_id, 'feedback_text_prompt'))
-            context.user_data['feedback_request_id'] = request_id
-            return FEEDBACK_TEXT
-        
-        elif action == "rating":
-            if len(parts) < 4:
-                await query.edit_message_text("❌ Ошибка: не указана оценка")
-                return ConversationHandler.END
-            rating = int(parts[3])
-            cursor.execute("""
-                INSERT INTO feedback(request_id, user_id, rating)
-                VALUES(?, ?, ?)
-            """, (request_id, user_id, rating))
-            db.commit()
-            
-            await query.edit_message_text(
-                get_text(user_id, 'feedback_rating_thanks', rating=rating),
-                parse_mode=None
-            )
-            return ConversationHandler.END
-            
-    except Exception as e:
-        logger.error(f"Feedback error: {e}")
-        await query.edit_message_text("❌ Произошла ошибка при обработке отзыва")
-        return ConversationHandler.END
-
-async def handle_feedback_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    request_id = context.user_data.get('feedback_request_id')
-    
-    if not request_id:
-        await update.message.reply_text("❌ Ошибка, попробуйте позже.")
-        return ConversationHandler.END
-    
-    comment = update.message.text
-    cursor.execute("""
-        INSERT INTO feedback(request_id, user_id, comment)
-        VALUES(?, ?, ?)
-    """, (request_id, user_id, comment))
-    db.commit()
-    
+    delete_draft(user_id)
+    clear_user_data(context)
     await update.message.reply_text(
-        get_text(user_id, 'feedback_text_thanks'),
-        parse_mode=None
+        "❌ Действие отменено. Напишите /start чтобы начать заново.",
+        reply_markup=remove_keyboard()
     )
-    context.user_data.pop('feedback_request_id', None)
-    return ConversationHandler.END
 
-async def request_feedback(bot, request_id, user_id):
-    """Отправка запроса на отзыв"""
-    try:
-        await bot.send_message(
-            user_id,
-            get_text(user_id, 'feedback_request'),
-            reply_markup=feedback_inline(request_id, user_id)
-        )
-    except Exception as e:
-        logger.error(f"Error sending feedback request: {e}")
+# ---------- АДМИНСКИЕ ФУНКЦИИ ----------
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_ID:
+        return
+
+    users = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    requests_total = cursor.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
+    pending = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='pending'").fetchone()[0]
+    processing = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='processing'").fetchone()[0]
+    completed = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='completed'").fetchone()[0]
+    cancelled = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='cancelled'").fetchone()[0]
+
+    stats = cursor.execute("SELECT category, COUNT(*) FROM requests GROUP BY category").fetchall()
+
+    text = f"{get_text(ADMIN_ID, 'admin_stats_title')}\n\n"
+    text += f"{get_text(ADMIN_ID, 'admin_users', users=users)}\n"
+    text += f"{get_text(ADMIN_ID, 'admin_total', total=requests_total)}\n"
+    text += f"{get_text(ADMIN_ID, 'admin_pending', pending=pending)}\n"
+    text += f"{get_text(ADMIN_ID, 'admin_processing', processing=processing)}\n"
+    text += f"{get_text(ADMIN_ID, 'admin_completed', completed=completed)}\n"
+    text += f"{get_text(ADMIN_ID, 'admin_cancelled', cancelled=cancelled)}\n\n"
+    text += f"{get_text(ADMIN_ID, 'admin_categories')}\n"
+
+    for category, count in stats:
+        text += f"  • {category}: {count}\n"
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Последние 10 заявок", callback_data="admin_recent")]
+    ])
+
+    await update.message.reply_text(text, reply_markup=keyboard)
+
+async def admin_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text("⛔ Доступ запрещён")
+        return
+    
+    requests = cursor.execute(
+        """SELECT id, request_number, user_id, category, status, created_at
+        FROM requests ORDER BY created_at DESC LIMIT 10"""
+    ).fetchall()
+    
+    if not requests:
+        await query.edit_message_text(get_text(ADMIN_ID, 'admin_no_requests'))
+        return
+    
+    text = f"{get_text(ADMIN_ID, 'admin_recent_title')}\n\n"
+    for req in requests:
+        status = get_status_emoji(req[4])
+        date = req[5][:16] if req[5] else ''
+        text += f"#{req[1]} {status} {req[3]}\n"
+        text += f"   {date} | {get_status_text(req[4])}\n\n"
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(get_text(ADMIN_ID, 'admin_refresh'), callback_data="admin_recent_refresh")],
+            [InlineKeyboardButton(get_text(ADMIN_ID, 'admin_back'), callback_data="admin_back")]
+        ])
+    )
+
+async def admin_recent_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await admin_recent(update, context)
+
+async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await admin(query.message, context)
 
 async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1738,64 +1617,128 @@ async def handle_request_status(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=admin_keyboard
     )
 
-async def commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /commands - показывает список доступных команд"""
-    user_id = update.message.from_user.id
-    text = get_text(user_id, 'commands_list')
-    await update.message.reply_text(
-        text,
-        parse_mode=None,
-        reply_markup=remove_keyboard()
-    )
-
-async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    await update.message.reply_text(
-        get_text(user_id, 'about_text'),
-        parse_mode=None,
-        reply_markup=remove_keyboard()
-    )
-
-async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    await update.message.reply_text(
-        get_text(user_id, 'faq_text'),
-        parse_mode=None,
-        reply_markup=remove_keyboard()
-    )
-
-async def contact_direct(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("💬 Написать напрямую: @goojifeed")
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /cancel - полный сброс"""
-    user_id = update.message.from_user.id
-    chat_id = update.message.chat_id
-    delete_draft(user_id)
-    clear_user_data(context)
-    context.user_data.clear()
-    if context.chat_data:
-        context.chat_data.clear()
-    reset_conversation(context, user_id, chat_id)
-    await update.message.reply_text(
-        "❌ Действие отменено. Напишите /start чтобы начать заново.",
-        reply_markup=remove_keyboard()
-    )
-    return ConversationHandler.END
-
-async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик для всего остального текста"""
-    user_id = update.message.from_user.id
+async def handle_request_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     
-    if update.message.text and update.message.text.startswith('/'):
-        if update.message.text == '/start':
-            return await global_start_handler(update, context)
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text("⛔ Доступ запрещён")
         return
     
-    await update.message.reply_text(
-        "ℹ️ Чтобы начать оформление заявки, напишите /start",
-        reply_markup=remove_keyboard()
+    parts = query.data.split("_")
+    request_id = int(parts[2])
+    
+    request_data = cursor.execute("SELECT user_id FROM requests WHERE id = ?", (request_id,)).fetchone()
+    if not request_data:
+        await query.edit_message_text("❌ Заявка не найдена")
+        return
+    
+    user_id = request_data[0]
+    context.user_data['chat_user_id'] = user_id
+    context.user_data['chat_request_id'] = request_id
+    context.user_data['editing_type'] = 'chat'
+    context.user_data['step'] = 'admin_chat'
+    
+    await query.edit_message_text(
+        f"💬 Чат с пользователем (заявка #{request_id})\n\n"
+        "Напишите сообщение, которое будет отправлено пользователю.\n"
+        "Для отмены отправьте /cancel"
     )
+
+async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    chat_user_id = context.user_data.get('chat_user_id')
+    if not chat_user_id:
+        await update.message.reply_text("❌ Нет активного чата")
+        return
+    
+    try:
+        await update.get_bot().send_message(chat_user_id, f"💬 Сообщение от администратора:\n\n{update.message.text}")
+        await update.message.reply_text("✅ Сообщение отправлено!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+async def request_feedback(bot, request_id, user_id):
+    try:
+        await bot.send_message(
+            user_id,
+            get_text(user_id, 'feedback_request'),
+            reply_markup=feedback_inline(request_id, user_id)
+        )
+    except Exception as e:
+        logger.error(f"Error sending feedback request: {e}")
+
+async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    try:
+        data = query.data
+        parts = data.split("_")
+        
+        if len(parts) < 3:
+            await query.edit_message_text("❌ Ошибка в данных отзыва")
+            return
+        
+        action = parts[1]
+        request_id = int(parts[2])
+        
+        if action == "skip":
+            await query.edit_message_text(get_text(user_id, 'feedback_skip'))
+            return
+        
+        elif action == "text":
+            await query.edit_message_text(get_text(user_id, 'feedback_text_prompt'))
+            context.user_data['feedback_request_id'] = request_id
+            context.user_data['step'] = 'feedback_text'
+            return
+        
+        elif action == "rating":
+            if len(parts) < 4:
+                await query.edit_message_text("❌ Ошибка: не указана оценка")
+                return
+            rating = int(parts[3])
+            cursor.execute("""
+                INSERT INTO feedback(request_id, user_id, rating)
+                VALUES(?, ?, ?)
+            """, (request_id, user_id, rating))
+            db.commit()
+            
+            await query.edit_message_text(
+                get_text(user_id, 'feedback_rating_thanks', rating=rating),
+                parse_mode=None
+            )
+            return
+            
+    except Exception as e:
+        logger.error(f"Feedback error: {e}")
+        await query.edit_message_text("❌ Произошла ошибка при обработке отзыва")
+
+async def handle_feedback_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    request_id = context.user_data.get('feedback_request_id')
+    
+    if not request_id:
+        await update.message.reply_text("❌ Ошибка, попробуйте позже.")
+        return
+    
+    comment = update.message.text
+    cursor.execute("""
+        INSERT INTO feedback(request_id, user_id, comment)
+        VALUES(?, ?, ?)
+    """, (request_id, user_id, comment))
+    db.commit()
+    
+    await update.message.reply_text(
+        get_text(user_id, 'feedback_text_thanks'),
+        parse_mode=None
+    )
+    context.user_data.pop('feedback_request_id', None)
+    context.user_data['step'] = ''
 
 async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
@@ -1999,79 +1942,6 @@ async def handle_edit_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await handle_admin_chat(update, context)
 
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_ID:
-        return
-
-    users = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    requests_total = cursor.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
-    pending = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='pending'").fetchone()[0]
-    processing = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='processing'").fetchone()[0]
-    completed = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='completed'").fetchone()[0]
-    cancelled = cursor.execute("SELECT COUNT(*) FROM requests WHERE status='cancelled'").fetchone()[0]
-
-    stats = cursor.execute("SELECT category, COUNT(*) FROM requests GROUP BY category").fetchall()
-
-    text = f"{get_text(ADMIN_ID, 'admin_stats_title')}\n\n"
-    text += f"{get_text(ADMIN_ID, 'admin_users', users=users)}\n"
-    text += f"{get_text(ADMIN_ID, 'admin_total', total=requests_total)}\n"
-    text += f"{get_text(ADMIN_ID, 'admin_pending', pending=pending)}\n"
-    text += f"{get_text(ADMIN_ID, 'admin_processing', processing=processing)}\n"
-    text += f"{get_text(ADMIN_ID, 'admin_completed', completed=completed)}\n"
-    text += f"{get_text(ADMIN_ID, 'admin_cancelled', cancelled=cancelled)}\n\n"
-    text += f"{get_text(ADMIN_ID, 'admin_categories')}\n"
-
-    for category, count in stats:
-        text += f"  • {category}: {count}\n"
-
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Последние 10 заявок", callback_data="admin_recent")]
-    ])
-
-    await update.message.reply_text(text, reply_markup=keyboard)
-
-async def admin_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.from_user.id != ADMIN_ID:
-        await query.edit_message_text("⛔ Доступ запрещён")
-        return
-    
-    requests = cursor.execute(
-        """SELECT id, request_number, user_id, category, status, created_at
-        FROM requests ORDER BY created_at DESC LIMIT 10"""
-    ).fetchall()
-    
-    if not requests:
-        await query.edit_message_text(get_text(ADMIN_ID, 'admin_no_requests'))
-        return
-    
-    text = f"{get_text(ADMIN_ID, 'admin_recent_title')}\n\n"
-    for req in requests:
-        status = get_status_emoji(req[4])
-        date = req[5][:16] if req[5] else ''
-        text += f"#{req[1]} {status} {req[3]}\n"
-        text += f"   {date} | {get_status_text(req[4])}\n\n"
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(get_text(ADMIN_ID, 'admin_refresh'), callback_data="admin_recent_refresh")],
-            [InlineKeyboardButton(get_text(ADMIN_ID, 'admin_back'), callback_data="admin_back")]
-        ])
-    )
-
-async def admin_recent_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await admin_recent(update, context)
-
-async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await admin(query.message, context)
-
 async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         return
@@ -2128,60 +1998,6 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-async def handle_request_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.from_user.id != ADMIN_ID:
-        await query.edit_message_text("⛔ Доступ запрещён")
-        return
-    
-    parts = query.data.split("_")
-    request_id = int(parts[2])
-    
-    request_data = cursor.execute("SELECT user_id FROM requests WHERE id = ?", (request_id,)).fetchone()
-    if not request_data:
-        await query.edit_message_text("❌ Заявка не найдена")
-        return
-    
-    user_id = request_data[0]
-    context.user_data['chat_user_id'] = user_id
-    context.user_data['chat_request_id'] = request_id
-    context.user_data['editing_type'] = 'chat'
-    
-    await query.edit_message_text(
-        f"💬 Чат с пользователем (заявка #{request_id})\n\n"
-        "Напишите сообщение, которое будет отправлено пользователю.\n"
-        "Для отмены отправьте /cancel"
-    )
-    return ADMIN_CHAT
-
-async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id != ADMIN_ID:
-        return
-    
-    chat_user_id = context.user_data.get('chat_user_id')
-    if not chat_user_id:
-        await update.message.reply_text("❌ Нет активного чата")
-        return
-    
-    try:
-        await update.get_bot().send_message(chat_user_id, f"💬 Сообщение от администратора:\n\n{update.message.text}")
-        await update.message.reply_text("✅ Сообщение отправлено!")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
-
-async def handle_user_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id == ADMIN_ID:
-        return
-    
-    await update.get_bot().send_message(
-        ADMIN_ID,
-        f"💬 Сообщение от пользователя @{update.message.from_user.username or 'без юзернейма'} (ID: {user_id}):\n\n{update.message.text}"
-    )
-
 def signal_handler(sig, frame):
     logger.info(f"Received signal {sig}, shutting down...")
     sys.exit(0)
@@ -2200,97 +2016,37 @@ def main():
     # Создаем приложение
     application = Application.builder().token(TOKEN).build()
     
-    # Регистрируем ConversationHandler
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start_command)],
-        states={
-            CATEGORY: [
-                CallbackQueryHandler(handle_category, pattern="^cat_"),
-                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_categories)$"),
-                CallbackQueryHandler(continue_draft, pattern="^continue_draft$"),
-                CallbackQueryHandler(delete_draft_callback, pattern="^delete_draft$")
-            ],
-            BUDGET: [
-                CallbackQueryHandler(handle_budget, pattern="^budget_"),
-                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_categories)$")
-            ],
-            PRIORITY: [
-                CallbackQueryHandler(handle_priority, pattern="^priority_"),
-                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_budget)$")
-            ],
-            USED: [
-                CallbackQueryHandler(handle_used, pattern="^used_"),
-                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_priority)$")
-            ],
-            MODELS: [
-                CallbackQueryHandler(handle_models, pattern="^(models_specify|models_skip)$"),
-                CallbackQueryHandler(handle_navigation, pattern="^(home|back_to_used)$"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, models_text)
-            ],
-            CONFIRM: [
-                CallbackQueryHandler(handle_confirm, pattern="^(confirm_yes|confirm_edit|home)$")
-            ],
-            EDIT_SELECT: [
-                CallbackQueryHandler(handle_edit_select, pattern="^(edit_category|edit_budget|edit_priority|edit_used|edit_models|home)$")
-            ],
-            CONTACT: [
-                MessageHandler(filters.CONTACT, contact_handler),
-                CallbackQueryHandler(handle_navigation, pattern="^home$")
-            ],
-            AFTER_SUBMIT: [
-                CallbackQueryHandler(handle_after_submit, pattern="^(new_request|my_requests|contact_admin|home)$")
-            ],
-            FEEDBACK: [
-                CallbackQueryHandler(handle_feedback, pattern="^fb_")
-            ],
-            FEEDBACK_TEXT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_feedback_text),
-                CommandHandler('cancel', cancel)
-            ],
-            EDITING_POST: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_post),
-                CommandHandler('cancel', cancel)
-            ],
-            ADMIN_CHAT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_post),
-                CommandHandler('cancel', cancel)
-            ],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-        per_message=False,
-        per_chat=False,
-    )
-    
-    # ВАЖНО: Глобальный обработчик /start с наивысшим приоритетом
-    application.add_handler(CommandHandler('start', global_start_handler), group=0)
-    
-    # Добавляем ConversationHandler
-    application.add_handler(conv_handler, group=1)
-    
-    # Добавляем остальные обработчики
-    application.add_handler(CommandHandler('news_now', news_now))
-    application.add_handler(CommandHandler('admin', admin))
-    application.add_handler(CommandHandler('export', export_data))
+    # Основные команды
+    application.add_handler(CommandHandler('start', start_command))
     application.add_handler(CommandHandler('stats', my_stats))
     application.add_handler(CommandHandler('settings', settings))
     application.add_handler(CommandHandler('about', about))
     application.add_handler(CommandHandler('commands', commands_list))
     application.add_handler(CommandHandler('faq', faq))
-    application.add_handler(CallbackQueryHandler(handle_post_callback, pattern="^(publish|edit|prev|next|refresh_news|close_news)"))
-    application.add_handler(CallbackQueryHandler(handle_request_status, pattern="^request_status_"))
-    application.add_handler(CallbackQueryHandler(handle_request_chat, pattern="^request_chat_"))
+    application.add_handler(CommandHandler('cancel', cancel))
+    
+    # Админские команды
+    application.add_handler(CommandHandler('admin', admin))
+    application.add_handler(CommandHandler('news_now', news_now))
+    application.add_handler(CommandHandler('export', export_data))
+    
+    # Callback обработчики
+    application.add_handler(CallbackQueryHandler(callback_handler, pattern="^(cat_|budget_|priority_|used_|models_|confirm_|edit_|new_request|my_requests|contact_admin|home|back_to_|settings_|lang_|theme_|share_bot|fb_)"))
     application.add_handler(CallbackQueryHandler(admin_recent, pattern="^admin_recent$"))
     application.add_handler(CallbackQueryHandler(admin_recent_refresh, pattern="^admin_recent_refresh$"))
     application.add_handler(CallbackQueryHandler(admin_back, pattern="^admin_back$"))
-    application.add_handler(CallbackQueryHandler(settings_callback, pattern="^(settings_lang|settings_theme|settings_back|share_bot|home)$"))
-    application.add_handler(CallbackQueryHandler(language_select, pattern="^lang_"))
-    application.add_handler(CallbackQueryHandler(theme_select, pattern="^theme_"))
+    application.add_handler(CallbackQueryHandler(handle_request_status, pattern="^request_status_"))
+    application.add_handler(CallbackQueryHandler(handle_request_chat, pattern="^request_chat_"))
+    application.add_handler(CallbackQueryHandler(handle_post_callback, pattern="^(publish|edit|prev|next|refresh_news|close_news)"))
+    application.add_handler(CallbackQueryHandler(handle_feedback, pattern="^fb_"))
+    
+    # Обработчики сообщений
+    application.add_handler(MessageHandler(filters.CONTACT, contact_handler))
     application.add_handler(MessageHandler(filters.Regex('❓ FAQ'), faq))
     application.add_handler(MessageHandler(filters.Regex('⚙️ Настройки'), settings))
     application.add_handler(MessageHandler(filters.Regex('📊 Моя статистика'), my_stats))
     application.add_handler(MessageHandler(filters.Regex('ℹ️ О проекте'), about))
-    application.add_handler(MessageHandler(filters.Regex('💬 Связаться'), contact_direct))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_handler))
     
     logger.info("Bot started successfully!")
     
