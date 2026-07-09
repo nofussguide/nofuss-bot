@@ -866,46 +866,44 @@ def run_health_server():
     loop.run_until_complete(start_web_server())
     loop.run_forever()
 
-# ---------- ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ДЛЯ /start (вне ConversationHandler) ----------
-async def global_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Глобальный обработчик /start, который работает ВНЕ ConversationHandler.
-    Он принудительно завершает любой диалог и начинает новый.
-    Это единственное решение проблемы с "зависанием" после перезапуска бота.
-    """
-    user_id = update.message.from_user.id
-    
-    # 1. Принудительно завершаем ConversationHandler для этого пользователя
-    # Используем метод, который гарантированно сбрасывает состояние
+# ---------- ФУНКЦИЯ ДЛЯ СБРОСА ДИАЛОГА ----------
+def reset_conversation(context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int):
+    """Принудительный сброс диалога для пользователя"""
     try:
-        # Получаем текущий диалог из ConversationHandler
-        current_conversation = context._conversation
-        if current_conversation:
-            # Генерируем ключ диалога
-            conversation_key = f"{user_id}_{update.message.chat_id}"
-            # Удаляем диалог из хранилища
-            if hasattr(current_conversation, 'conversations'):
-                current_conversation.conversations.pop(conversation_key, None)
-                logger.info(f"Conversation for user {user_id} forcibly ended")
+        conversation_key = f"{user_id}_{chat_id}"
+        if hasattr(context, '_conversation') and context._conversation:
+            if hasattr(context._conversation, 'conversations'):
+                context._conversation.conversations.pop(conversation_key, None)
+                logger.info(f"Conversation reset for user {user_id}")
+                return True
     except Exception as e:
-        logger.warning(f"Error while ending conversation: {e}")
+        logger.warning(f"Error resetting conversation: {e}")
+    return False
+
+# ---------- ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ДЛЯ /start ----------
+async def global_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Глобальный обработчик /start - принудительно сбрасывает диалог"""
+    user_id = update.message.from_user.id
+    chat_id = update.message.chat_id
     
-    # 2. Полная очистка данных
+    # Сбрасываем диалог
+    reset_conversation(context, user_id, chat_id)
+    
+    # Очищаем данные
     if context.user_data:
         context.user_data.clear()
     if context.chat_data:
         context.chat_data.clear()
     
-    # 3. Удаляем черновик
     delete_draft(user_id)
     
-    # 4. Регистрируем пользователя
+    # Регистрируем пользователя
     user_name = update.message.from_user.first_name or ""
     cursor.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?, ?, ?)", 
                    (user_id, update.message.from_user.username or '', user_name))
     db.commit()
     
-    # 5. Отправляем приветствие
+    # Отправляем приветствие
     await update.message.reply_text(
         f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
         f"📱 {get_text(user_id, 'choose_category')}",
@@ -913,20 +911,17 @@ async def global_start_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=remove_keyboard()
     )
     
-    # 6. Отправляем выбор категории
     await update.message.reply_text(
         f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
         f"{get_text(user_id, 'choose_category')}",
         reply_markup=categories_inline(user_id)
     )
     
-    # 7. Возвращаем состояние CATEGORY для ConversationHandler
     return CATEGORY
 
 # ---------- ОБРАБОТЧИКИ ----------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запасной обработчик /start для ConversationHandler"""
-    # Просто вызываем глобальный обработчик
     return await global_start_handler(update, context)
 
 async def delete_draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1026,8 +1021,17 @@ async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    chat_id = query.message.chat_id
     
-    category = CATEGORIES[int(query.data.split("_")[1])]
+    # Проверяем, что диалог активен, если нет - сбрасываем
+    try:
+        category = CATEGORIES[int(query.data.split("_")[1])]
+    except (IndexError, ValueError):
+        # Если не можем получить категорию - сбрасываем диалог
+        reset_conversation(context, user_id, chat_id)
+        await query.edit_message_text("🔄 Сессия обновлена. Начните заново с /start")
+        return ConversationHandler.END
+    
     context.user_data['category'] = category
     context.user_data['_last_step'] = 'budget'
     save_draft(user_id, context.user_data)
@@ -1044,9 +1048,16 @@ async def handle_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    chat_id = query.message.chat_id
     
-    category = context.user_data.get('category', '📱 Смартфоны')
-    budget = BUDGETS.get(category, [])[int(query.data.split("_")[1])]
+    try:
+        category = context.user_data.get('category', '📱 Смартфоны')
+        budget = BUDGETS.get(category, [])[int(query.data.split("_")[1])]
+    except (IndexError, ValueError, KeyError):
+        reset_conversation(context, user_id, chat_id)
+        await query.edit_message_text("🔄 Сессия обновлена. Начните заново с /start")
+        return ConversationHandler.END
+    
     context.user_data['budget'] = budget
     context.user_data['_last_step'] = 'priority'
     save_draft(user_id, context.user_data)
@@ -1073,9 +1084,16 @@ async def handle_priority(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    chat_id = query.message.chat_id
     
-    category = context.user_data.get('category', '📱 Смартфоны')
-    priority = PRIORITIES.get(category, [])[int(query.data.split("_")[1])]
+    try:
+        category = context.user_data.get('category', '📱 Смартфоны')
+        priority = PRIORITIES.get(category, [])[int(query.data.split("_")[1])]
+    except (IndexError, ValueError, KeyError):
+        reset_conversation(context, user_id, chat_id)
+        await query.edit_message_text("🔄 Сессия обновлена. Начните заново с /start")
+        return ConversationHandler.END
+    
     context.user_data['priority'] = priority
     context.user_data['_last_step'] = 'used'
     save_draft(user_id, context.user_data)
@@ -1163,6 +1181,7 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    chat_id = query.message.chat_id
     
     if query.data == "confirm_yes":
         can_send, wait_time = can_send_request(user_id)
@@ -1257,12 +1276,15 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    chat_id = query.message.chat_id
     
     action = query.data
     
     if action == "home":
         delete_draft(user_id)
         clear_user_data(context)
+        # Сбрасываем диалог при возврате на главную
+        reset_conversation(context, user_id, chat_id)
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
@@ -1377,17 +1399,23 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.get_bot().send_message(ADMIN_ID, admin_text, parse_mode=None, reply_markup=keyboard)
     
+    # После отправки заявки сбрасываем диалог, чтобы при следующей заявке всё работало
+    reset_conversation(context, user_id, update.message.chat_id)
+    
     return AFTER_SUBMIT
 
 async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    chat_id = query.message.chat_id
     
     action = query.data
     
     if action == "new_request":
         clear_user_data(context)
+        # КРИТИЧЕСКИ ВАЖНО: Сбрасываем диалог перед созданием новой заявки
+        reset_conversation(context, user_id, chat_id)
         await query.edit_message_text(
             f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
             f"{get_text(user_id, 'choose_category')}",
@@ -1442,6 +1470,7 @@ async def handle_after_submit(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     elif action == "home":
         clear_user_data(context)
+        reset_conversation(context, user_id, chat_id)
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
@@ -1741,11 +1770,13 @@ async def contact_direct(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /cancel - полный сброс"""
     user_id = update.message.from_user.id
+    chat_id = update.message.chat_id
     delete_draft(user_id)
     clear_user_data(context)
     context.user_data.clear()
     if context.chat_data:
         context.chat_data.clear()
+    reset_conversation(context, user_id, chat_id)
     await update.message.reply_text(
         "❌ Действие отменено. Напишите /start чтобы начать заново.",
         reply_markup=remove_keyboard()
@@ -1756,13 +1787,11 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик для всего остального текста"""
     user_id = update.message.from_user.id
     
-    # Если это команда /start, передаём её в global_start_handler
     if update.message.text and update.message.text.startswith('/'):
         if update.message.text == '/start':
             return await global_start_handler(update, context)
         return
     
-    # Если пользователь ввёл текст вне диалога, предлагаем начать заново
     await update.message.reply_text(
         "ℹ️ Чтобы начать оформление заявки, напишите /start",
         reply_markup=remove_keyboard()
@@ -2232,8 +2261,7 @@ def main():
         per_chat=False,
     )
     
-    # ВАЖНО: Добавляем глобальный обработчик /start ПЕРЕД ConversationHandler
-    # Он будет перехватывать все вызовы /start и принудительно сбрасывать состояние
+    # ВАЖНО: Глобальный обработчик /start с наивысшим приоритетом
     application.add_handler(CommandHandler('start', global_start_handler), group=0)
     
     # Добавляем ConversationHandler
