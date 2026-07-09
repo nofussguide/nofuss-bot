@@ -904,6 +904,52 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Callback: user={user_id}, step={step}, data={data}")
     
+    # ---------- ОБРАБОТКА FEEDBACK (должна быть первой, чтобы не конфликтовать) ----------
+    if data.startswith("fb_"):
+        try:
+            parts = data.split("_")
+            
+            if len(parts) < 3:
+                await query.edit_message_text("❌ Ошибка в данных отзыва")
+                return
+            
+            action = parts[1]
+            request_id = int(parts[2])
+            
+            if action == "skip":
+                await query.edit_message_text(get_text(user_id, 'feedback_skip'))
+                context.user_data['step'] = ''
+                return
+            
+            elif action == "text":
+                await query.edit_message_text(get_text(user_id, 'feedback_text_prompt'))
+                context.user_data['feedback_request_id'] = request_id
+                context.user_data['step'] = 'feedback_text'
+                return
+            
+            elif action == "rating":
+                if len(parts) < 4:
+                    await query.edit_message_text("❌ Ошибка: не указана оценка")
+                    return
+                rating = int(parts[3])
+                cursor.execute("""
+                    INSERT INTO feedback(request_id, user_id, rating)
+                    VALUES(?, ?, ?)
+                """, (request_id, user_id, rating))
+                db.commit()
+                
+                await query.edit_message_text(
+                    get_text(user_id, 'feedback_rating_thanks', rating=rating),
+                    parse_mode=None
+                )
+                context.user_data['step'] = ''
+                return
+                
+        except Exception as e:
+            logger.error(f"Feedback error: {e}")
+            await query.edit_message_text("❌ Произошла ошибка при обработке отзыва")
+            return
+    
     # ---------- ОБРАБОТКА НАВИГАЦИИ ----------
     if data == "home":
         clear_user_data(context)
@@ -1406,8 +1452,33 @@ async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     step = context.user_data.get('step', '')
     
+    # Обработка ввода моделей
     if step == 'models_text':
         await models_text_handler(update, context)
+        return
+    
+    # Обработка текстового отзыва
+    if step == 'feedback_text':
+        request_id = context.user_data.get('feedback_request_id')
+        if request_id:
+            comment = update.message.text
+            cursor.execute("""
+                INSERT INTO feedback(request_id, user_id, comment)
+                VALUES(?, ?, ?)
+            """, (request_id, user_id, comment))
+            db.commit()
+            
+            await update.message.reply_text(
+                get_text(user_id, 'feedback_text_thanks'),
+                parse_mode=None
+            )
+            context.user_data.pop('feedback_request_id', None)
+            context.user_data['step'] = ''
+            return
+    
+    # Обработка админского чата
+    if step == 'admin_chat':
+        await handle_admin_chat(update, context)
         return
     
     await update.message.reply_text(
@@ -1670,75 +1741,6 @@ async def request_feedback(bot, request_id, user_id):
         )
     except Exception as e:
         logger.error(f"Error sending feedback request: {e}")
-
-async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    try:
-        data = query.data
-        parts = data.split("_")
-        
-        if len(parts) < 3:
-            await query.edit_message_text("❌ Ошибка в данных отзыва")
-            return
-        
-        action = parts[1]
-        request_id = int(parts[2])
-        
-        if action == "skip":
-            await query.edit_message_text(get_text(user_id, 'feedback_skip'))
-            return
-        
-        elif action == "text":
-            await query.edit_message_text(get_text(user_id, 'feedback_text_prompt'))
-            context.user_data['feedback_request_id'] = request_id
-            context.user_data['step'] = 'feedback_text'
-            return
-        
-        elif action == "rating":
-            if len(parts) < 4:
-                await query.edit_message_text("❌ Ошибка: не указана оценка")
-                return
-            rating = int(parts[3])
-            cursor.execute("""
-                INSERT INTO feedback(request_id, user_id, rating)
-                VALUES(?, ?, ?)
-            """, (request_id, user_id, rating))
-            db.commit()
-            
-            await query.edit_message_text(
-                get_text(user_id, 'feedback_rating_thanks', rating=rating),
-                parse_mode=None
-            )
-            return
-            
-    except Exception as e:
-        logger.error(f"Feedback error: {e}")
-        await query.edit_message_text("❌ Произошла ошибка при обработке отзыва")
-
-async def handle_feedback_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    request_id = context.user_data.get('feedback_request_id')
-    
-    if not request_id:
-        await update.message.reply_text("❌ Ошибка, попробуйте позже.")
-        return
-    
-    comment = update.message.text
-    cursor.execute("""
-        INSERT INTO feedback(request_id, user_id, comment)
-        VALUES(?, ?, ?)
-    """, (request_id, user_id, comment))
-    db.commit()
-    
-    await update.message.reply_text(
-        get_text(user_id, 'feedback_text_thanks'),
-        parse_mode=None
-    )
-    context.user_data.pop('feedback_request_id', None)
-    context.user_data['step'] = ''
 
 async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
@@ -2030,7 +2032,7 @@ def main():
     application.add_handler(CommandHandler('news_now', news_now))
     application.add_handler(CommandHandler('export', export_data))
     
-    # Callback обработчики
+    # Callback обработчики - ВСЕ в одном месте
     application.add_handler(CallbackQueryHandler(callback_handler, pattern="^(cat_|budget_|priority_|used_|models_|confirm_|edit_|new_request|my_requests|contact_admin|home|back_to_|settings_|lang_|theme_|share_bot|fb_)"))
     application.add_handler(CallbackQueryHandler(admin_recent, pattern="^admin_recent$"))
     application.add_handler(CallbackQueryHandler(admin_recent_refresh, pattern="^admin_recent_refresh$"))
@@ -2038,7 +2040,6 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_request_status, pattern="^request_status_"))
     application.add_handler(CallbackQueryHandler(handle_request_chat, pattern="^request_chat_"))
     application.add_handler(CallbackQueryHandler(handle_post_callback, pattern="^(publish|edit|prev|next|refresh_news|close_news)"))
-    application.add_handler(CallbackQueryHandler(handle_feedback, pattern="^fb_"))
     
     # Обработчики сообщений
     application.add_handler(MessageHandler(filters.CONTACT, contact_handler))
