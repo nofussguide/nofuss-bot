@@ -38,6 +38,9 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 479330946
 UNSPLASH_ACCESS_KEY = "kPtZY-3eUqZh3Epo9iBbGufCXwyAPUyrZsR29B8j218"
 
+# ---------- НАСТРОЙКИ СЕССИИ ----------
+SESSION_TIMEOUT = 1800  # 30 минут
+
 # ---------- БАЗА ДАННЫХ ----------
 db = sqlite3.connect("nofuss.db", check_same_thread=False)
 cursor = db.cursor()
@@ -530,6 +533,17 @@ def clear_user_data(context: ContextTypes.DEFAULT_TYPE):
     """Полная очистка данных пользователя"""
     context.user_data.clear()
 
+def check_session_timeout(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """Проверяет, не истекла ли сессия пользователя"""
+    last_activity = context.user_data.get('last_activity')
+    if last_activity:
+        if time.time() - last_activity > SESSION_TIMEOUT:
+            clear_user_data(context)
+            delete_draft(user_id)
+            return True
+    context.user_data['last_activity'] = time.time()
+    return False
+
 # ---------- ИНЛАЙН-КЛАВИАТУРЫ ----------
 def categories_inline(user_id):
     buttons = []
@@ -876,6 +890,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Устанавливаем состояние
     context.user_data['step'] = 'category'
+    context.user_data['last_activity'] = time.time()
     
     await update.message.reply_text(
         f"👋 {user_name}, {get_text(user_id, 'welcome')}\n\n"
@@ -899,12 +914,82 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     chat_id = query.message.chat_id
     
+    # Проверяем таймаут сессии
+    if check_session_timeout(context, user_id):
+        await query.edit_message_text(
+            "⏰ Ваша сессия истекла из-за неактивности.\n"
+            "Напишите /start чтобы начать заново.",
+            reply_markup=remove_keyboard()
+        )
+        return
+    
     # Проверяем, есть ли активный шаг
     step = context.user_data.get('step', '')
     
     logger.info(f"Callback: user={user_id}, step={step}, data={data}")
     
-    # ---------- ОБРАБОТКА FEEDBACK (должна быть первой, чтобы не конфликтовать) ----------
+    # ---------- ПОДТВЕРЖДЕНИЕ ОТМЕНЫ ----------
+    if data == "confirm_cancel":
+        delete_draft(user_id)
+        clear_user_data(context)
+        context.user_data['step'] = 'category'
+        await query.edit_message_text(
+            "✅ Отмена подтверждена. Напишите /start чтобы начать заново.",
+            reply_markup=remove_keyboard()
+        )
+        return
+    
+    if data == "continue_cancel":
+        step = context.user_data.get('previous_step', 'category')
+        context.user_data['step'] = step
+        await query.edit_message_text("✅ Продолжаем оформление заявки!")
+        # Возвращаем на нужный шаг
+        if step == 'category':
+            await query.edit_message_text(
+                f"{get_text(user_id, 'choose_category')}",
+                reply_markup=categories_inline(user_id)
+            )
+        elif step == 'budget':
+            category = context.user_data.get('category', '📱 Смартфоны')
+            await query.edit_message_text(
+                f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
+                f"✅ Выбрано: {category}\n\n"
+                f"{get_text(user_id, 'choose_budget')}",
+                reply_markup=budget_inline(category, user_id)
+            )
+        elif step == 'priority':
+            category = context.user_data.get('category', '📱 Смартфоны')
+            await query.edit_message_text(
+                f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
+                f"✅ Категория: {category}\n"
+                f"💰 Бюджет: {context.user_data.get('budget')}\n\n"
+                f"{get_text(user_id, 'choose_priority')}",
+                reply_markup=priority_inline(category, user_id)
+            )
+        elif step == 'used':
+            await query.edit_message_text(
+                f"{get_progress_bar(4)} {get_step_text(4)}\n\n"
+                f"✅ Категория: {context.user_data.get('category')}\n"
+                f"💰 Бюджет: {context.user_data.get('budget')}\n"
+                f"🎯 Приоритет: {context.user_data.get('priority')}\n\n"
+                f"{get_text(user_id, 'choose_used')}",
+                reply_markup=used_inline(user_id)
+            )
+        elif step == 'models_choice':
+            await query.edit_message_text(
+                f"{get_progress_bar(5)} {get_step_text(5)}\n\n"
+                f"✅ Категория: {context.user_data.get('category')}\n"
+                f"💰 Бюджет: {context.user_data.get('budget')}\n"
+                f"🎯 Приоритет: {context.user_data.get('priority')}\n"
+                f"♻️ Б/У: {context.user_data.get('used')}\n\n"
+                f"{get_text(user_id, 'choose_models')}",
+                reply_markup=models_inline(user_id)
+            )
+        elif step == 'confirm':
+            await show_confirm(query, context, user_id)
+        return
+    
+    # ---------- ОБРАБОТКА FEEDBACK ----------
     if data.startswith("fb_"):
         try:
             parts = data.split("_")
@@ -955,6 +1040,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clear_user_data(context)
         delete_draft(user_id)
         context.user_data['step'] = 'category'
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
             reply_markup=categories_inline(user_id)
@@ -963,6 +1049,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "back_to_categories":
         context.user_data['step'] = 'category'
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
             f"{get_text(user_id, 'choose_category')}",
@@ -972,6 +1059,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "back_to_budget":
         context.user_data['step'] = 'budget'
+        context.user_data['last_activity'] = time.time()
         category = context.user_data.get('category', '📱 Смартфоны')
         await query.edit_message_text(
             f"{get_progress_bar(2)} {get_step_text(2)}\n\n"
@@ -983,6 +1071,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "back_to_priority":
         context.user_data['step'] = 'priority'
+        context.user_data['last_activity'] = time.time()
         category = context.user_data.get('category', '📱 Смартфоны')
         await query.edit_message_text(
             f"{get_progress_bar(3)} {get_step_text(3)}\n\n"
@@ -995,6 +1084,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "back_to_used":
         context.user_data['step'] = 'used'
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             f"{get_progress_bar(4)} {get_step_text(4)}\n\n"
             f"✅ Категория: {context.user_data.get('category')}\n"
@@ -1011,6 +1101,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             category = CATEGORIES[int(data.split("_")[1])]
             context.user_data['category'] = category
             context.user_data['step'] = 'budget'
+            context.user_data['last_activity'] = time.time()
             save_draft(user_id, context.user_data)
             
             await query.edit_message_text(
@@ -1035,6 +1126,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             category = context.user_data.get('category', '📱 Смартфоны')
             budget = BUDGETS.get(category, [])[int(data.split("_")[1])]
             context.user_data['budget'] = budget
+            context.user_data['last_activity'] = time.time()
             
             if category in NO_PRIORITY_CATEGORIES:
                 context.user_data['priority'] = "Не требуется"
@@ -1072,6 +1164,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             priority = PRIORITIES.get(category, [])[int(data.split("_")[1])]
             context.user_data['priority'] = priority
             context.user_data['step'] = 'used'
+            context.user_data['last_activity'] = time.time()
             save_draft(user_id, context.user_data)
             
             await query.edit_message_text(
@@ -1099,6 +1192,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             used = used_map.get(data, 'Не указано')
             context.user_data['used'] = used
             context.user_data['step'] = 'models_choice'
+            context.user_data['last_activity'] = time.time()
             save_draft(user_id, context.user_data)
             
             await query.edit_message_text(
@@ -1122,6 +1216,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ---------- ВЫБОР МОДЕЛЕЙ ----------
     if data == "models_specify" and step == 'models_choice':
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             f"{get_progress_bar(5)} {get_step_text(5)}\n\n"
             "📝 Напишите понравившиеся модели через запятую.\n\n"
@@ -1133,6 +1228,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "models_skip" and step == 'models_choice':
         context.user_data['models'] = "Не указано"
         context.user_data['step'] = 'confirm'
+        context.user_data['last_activity'] = time.time()
         save_draft(user_id, context.user_data)
         await show_confirm(query, context, user_id)
         return
@@ -1148,6 +1244,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         delete_draft(user_id)
         context.user_data['step'] = 'contact'
+        context.user_data['last_activity'] = time.time()
         await query.message.delete()
         await query.message.reply_text(
             get_text(user_id, 'contact_request'),
@@ -1156,6 +1253,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == "confirm_edit" and step == 'confirm':
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             "✏️ Выберите, что хотите изменить:",
             reply_markup=edit_select_inline(user_id)
@@ -1169,6 +1267,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if action == "edit_category":
             context.user_data['step'] = 'category'
+            context.user_data['last_activity'] = time.time()
             await query.edit_message_text(
                 get_text(user_id, 'choose_category'),
                 reply_markup=categories_inline(user_id)
@@ -1177,6 +1276,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif action == "edit_budget":
             context.user_data['step'] = 'budget'
+            context.user_data['last_activity'] = time.time()
             category = context.user_data.get('category', '📱 Смартфоны')
             await query.edit_message_text(
                 f"💰 {get_text(user_id, 'choose_budget')}",
@@ -1190,6 +1290,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("ℹ️ Для этой категории приоритет не требуется")
                 return
             context.user_data['step'] = 'priority'
+            context.user_data['last_activity'] = time.time()
             await query.edit_message_text(
                 get_text(user_id, 'choose_priority'),
                 reply_markup=priority_inline(category, user_id)
@@ -1198,6 +1299,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif action == "edit_used":
             context.user_data['step'] = 'used'
+            context.user_data['last_activity'] = time.time()
             await query.edit_message_text(
                 get_text(user_id, 'choose_used'),
                 reply_markup=used_inline(user_id)
@@ -1206,6 +1308,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif action == "edit_models":
             context.user_data['step'] = 'models_choice'
+            context.user_data['last_activity'] = time.time()
             await query.edit_message_text(
                 "📝 Напишите модели через запятую\n\n"
                 "Например: iPhone 17, Galaxy S27",
@@ -1217,6 +1320,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             clear_user_data(context)
             delete_draft(user_id)
             context.user_data['step'] = 'category'
+            context.user_data['last_activity'] = time.time()
             await query.edit_message_text(
                 f"{get_text(user_id, 'home')}\n\n{get_text(user_id, 'choose_category')}",
                 reply_markup=categories_inline(user_id)
@@ -1228,6 +1332,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clear_user_data(context)
         delete_draft(user_id)
         context.user_data['step'] = 'category'
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             f"{get_progress_bar(1)} {get_step_text(1)}\n\n"
             f"{get_text(user_id, 'choose_category')}",
@@ -1236,6 +1341,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == "my_requests":
+        context.user_data['last_activity'] = time.time()
         requests = cursor.execute(
             """SELECT id, request_number, category, status, created_at, budget, priority, used, models
             FROM requests WHERE user_id=? 
@@ -1271,6 +1377,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == "contact_admin":
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             get_text(user_id, 'contact_admin_text'),
             reply_markup=InlineKeyboardMarkup([
@@ -1282,6 +1389,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ---------- НАСТРОЙКИ ----------
     if data == "settings_lang":
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             get_text(user_id, 'settings_lang'),
             parse_mode=None,
@@ -1290,6 +1398,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == "settings_theme":
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             get_text(user_id, 'settings_theme'),
             parse_mode=None,
@@ -1298,6 +1407,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == "share_bot":
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             get_text(user_id, 'share_text'),
             reply_markup=InlineKeyboardMarkup([
@@ -1308,6 +1418,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == "settings_back":
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             get_text(user_id, 'settings_title'),
             parse_mode=None,
@@ -1318,6 +1429,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("lang_"):
         lang = data.split("_")[1]
         update_user_lang(user_id, lang)
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             get_text(user_id, 'language_changed', lang=LANGUAGES.get(lang, lang)),
             reply_markup=settings_inline(user_id)
@@ -1327,6 +1439,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("theme_"):
         theme = data.split("_")[1]
         update_user_theme(user_id, theme)
+        context.user_data['last_activity'] = time.time()
         await query.edit_message_text(
             get_text(user_id, 'theme_changed', theme=THEMES.get(theme, theme)),
             reply_markup=settings_inline(user_id)
@@ -1334,7 +1447,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # ---------- ЕСЛИ НИ ОДИН ОБРАБОТЧИК НЕ СРАБОТАЛ ----------
-    # Пытаемся восстановиться - сбрасываем состояние
     logger.warning(f"Unhandled callback: {data} for user {user_id}")
     clear_user_data(context)
     context.user_data['step'] = 'category'
@@ -1359,6 +1471,7 @@ async def show_confirm(update_or_query, context, user_id):
     )
     
     context.user_data['step'] = 'confirm'
+    context.user_data['last_activity'] = time.time()
     save_draft(user_id, context.user_data)
     
     if hasattr(update_or_query, 'edit_message_text'):
@@ -1401,8 +1514,14 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     delete_draft(user_id)
     clear_user_data(context)
     
+    # Улучшенное сообщение
     await update.message.reply_text(
-        get_text(user_id, 'request_accepted'),
+        f"{get_text(user_id, 'request_accepted')}\n\n"
+        "📌 А пока ждёте ответа специалиста:\n"
+        "• Посмотрите наши полезные советы в канале\n"
+        "• Почитайте отзывы других пользователей\n"
+        "• Подготовьте дополнительные вопросы\n\n"
+        "💡 Напоминаем: ответ обычно приходит в течение дня!",
         reply_markup=remove_keyboard()
     )
     
@@ -1441,6 +1560,7 @@ async def models_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     
     context.user_data['models'] = update.message.text
+    context.user_data['last_activity'] = time.time()
     await show_confirm(update, context, user_id)
 
 async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1492,6 +1612,10 @@ async def commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = get_text(user_id, 'commands_list')
     await update.message.reply_text(text, parse_mode=None, reply_markup=remove_keyboard())
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /help"""
+    await commands_list(update, context)
 
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -1551,7 +1675,24 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /cancel - полный сброс с подтверждением"""
     user_id = update.message.from_user.id
+    
+    # Проверяем, есть ли активные данные
+    step = context.user_data.get('step', '')
+    if step and step not in ['', 'category']:
+        # Сохраняем текущий шаг для возврата
+        context.user_data['previous_step'] = step
+        await update.message.reply_text(
+            "⚠️ Вы уверены, что хотите отменить текущую заявку?\n\n"
+            "Все введённые данные будут потеряны.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Да, отменить", callback_data="confirm_cancel")],
+                [InlineKeyboardButton("❌ Нет, продолжить", callback_data="continue_cancel")]
+            ])
+        )
+        return
+    
     delete_draft(user_id)
     clear_user_data(context)
     await update.message.reply_text(
@@ -2020,6 +2161,7 @@ def main():
     
     # Основные команды
     application.add_handler(CommandHandler('start', start_command))
+    application.add_handler(CommandHandler('help', help_command))
     application.add_handler(CommandHandler('stats', my_stats))
     application.add_handler(CommandHandler('settings', settings))
     application.add_handler(CommandHandler('about', about))
@@ -2033,7 +2175,7 @@ def main():
     application.add_handler(CommandHandler('export', export_data))
     
     # Callback обработчики - ВСЕ в одном месте
-    application.add_handler(CallbackQueryHandler(callback_handler, pattern="^(cat_|budget_|priority_|used_|models_|confirm_|edit_|new_request|my_requests|contact_admin|home|back_to_|settings_|lang_|theme_|share_bot|fb_)"))
+    application.add_handler(CallbackQueryHandler(callback_handler, pattern="^(cat_|budget_|priority_|used_|models_|confirm_|edit_|new_request|my_requests|contact_admin|home|back_to_|settings_|lang_|theme_|share_bot|fb_|confirm_cancel|continue_cancel)"))
     application.add_handler(CallbackQueryHandler(admin_recent, pattern="^admin_recent$"))
     application.add_handler(CallbackQueryHandler(admin_recent_refresh, pattern="^admin_recent_refresh$"))
     application.add_handler(CallbackQueryHandler(admin_back, pattern="^admin_back$"))
